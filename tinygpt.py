@@ -1,8 +1,8 @@
-# !pip install torch transformers
+# !pip install torch transformers requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import os
+import os, requests
 from dataclasses import dataclass
 from transformers import AutoTokenizer
 
@@ -20,8 +20,15 @@ class State:
     data: torch.Tensor
     vocab_size: int
 
-
 def build_state() -> State:
+    # Download dataset if needed
+    if not os.path.exists("shakespeare.txt"):
+        print("Downloading Tiny Shakespeare dataset...")
+        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        data = requests.get(url).text
+        with open("shakespeare.txt", "w", encoding="utf-8") as f:
+            f.write(data)
+
     # Load training dataset
     with open("shakespeare.txt", "r", encoding="utf-8") as f:
         text = f.read()
@@ -140,7 +147,8 @@ def initialize_and_train(state: State,
     optimizer = torch.optim.Adam(model.parameters(), lr=G_LR)
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Total parameters: {total_params:,}")
+    total_m = total_params / 1_000_000
+    print(f"Total parameters: {total_m:.2f}M")
     print(model)
 
     for step in range(max_iters):
@@ -163,11 +171,6 @@ def initialize_and_train(state: State,
             print(f"step {step+1}: loss {loss.item()}")
 
     return model
-
-
-# Run training and capture trained model
-state = build_state()
-model = initialize_and_train(state)
 
 
 # Text Generation Function
@@ -197,6 +200,10 @@ sample = generateText(
     start_text="To be, or not to be: that is the question:",
     max_tokens=100,
 )
+
+# Run training and capture trained model
+state = build_state()
+model = initialize_and_train(state)
 
 print("------ FINAL TEXT ------")
 print(sample)
