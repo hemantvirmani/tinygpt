@@ -222,7 +222,6 @@ def initialize_and_train(state: State,
     start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
     for step in range(start_step, max_iters):
-
         x, y = get_batch(state, split="train")
         loss = compute_loss(model, x, y)
 
@@ -264,28 +263,21 @@ def generateText(model, state: State, start_text, max_tokens=50):
     return text
 
 def main():
-
-    resume_path = None
-
     #basic argument parsing for checkpoint resume/save
     p = argparse.ArgumentParser(description="Train TinyGPT")
     p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
     checkpoint_path = p.parse_args().checkpoint
 
-    if checkpoint_path:
-        resume_path = checkpoint_path
-
     #build the state and train the model
     state = build_state()
     model = initialize_and_train(
         state,
-        resume_path=resume_path,
+        resume_path=checkpoint_path if checkpoint_path else None,
     )
 
     #Lets generate some text from the trained model
     sample = generateText(
-        model,
-        state,
+        model, state,
         start_text="To be, or not to be: that is the question:",
         max_tokens=100,
     )
