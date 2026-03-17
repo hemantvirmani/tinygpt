@@ -11,11 +11,11 @@ from typing import Any
 #Hyperparameters
 G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 64
-G_N_EMBD = 128
-G_MAX_ITERS = 2000
+G_N_EMBD = 64
+G_MAX_ITERS = 800
 G_LR = 5e-4
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-G_SEED = 1947
+G_SEED = 1978
 
 torch.manual_seed(G_SEED)
 if torch.cuda.is_available():
@@ -113,7 +113,7 @@ class Block(nn.Module):
         return x
 
 #Lets Create the GPT model
-class TinyGPT(nn.Module):
+class FemtoGPT(nn.Module):
     def __init__(self, vocab_size: int):
         super().__init__()
 
@@ -148,46 +148,6 @@ def compute_loss(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Te
     targets = y.view(B * T)
     return F.cross_entropy(logits, targets)
 
-
-def maybe_load_checkpoint(
-    model: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    resume_path: str | None,
-) -> int:
-    if not resume_path:
-        return 0
-    ckpt = torch.load(resume_path, map_location=G_DEVICE)
-    model.load_state_dict(ckpt["model_state"])
-    optimizer.load_state_dict(ckpt["optimizer_state"])
-    start_step = int(ckpt.get("step", 0))
-    print(f"Resumed from {resume_path} at step {start_step}")
-    return start_step
-
-
-def maybe_save_checkpoint(
-    model: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    step: int,
-    resume_path: str | None,
-    vocab_size: int,
-) -> None:
-    if resume_path is None or (step + 1) % 500 != 0:
-        return
-    checkpoint_dir = os.path.dirname(resume_path) or "checkpoints"
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
-    torch.save(
-        {
-            "step": step + 1,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "vocab_size": vocab_size,
-        },
-        ckpt_path,
-    )
-    print(f"Saved checkpoint: {ckpt_path}")
-
-
 def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
     was_training = model.training
     model.eval()
@@ -198,31 +158,25 @@ def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
         model.train()
     return val_loss
 
-def initialize_and_train(state: State,
-                         max_iters: int = G_MAX_ITERS,
-                         resume_path: str | None = None) -> nn.Module:
-    """Create, train, and return a `TinyGPT` model.
+def initialize_and_train(state: State) -> nn.Module:
+    """Create, train, and return a `FemtoGPT` model.
 
     Args:
         state: training state (tokenizer, data, vocab_size).
-        max_iters: number of training iterations.
-        resume_path: path to a checkpoint file to resume from.
 
     Returns:
-        Trained `TinyGPT` instance (on `device`).
+        Trained `FemtoGPT` instance (on `device`).
     """
 
     # Model Initialization
-    model = TinyGPT(state.vocab_size).to(G_DEVICE)
+    model = FemtoGPT(state.vocab_size).to(G_DEVICE)
     optimizer = torch.optim.Adam(model.parameters(), lr=G_LR)
 
     total_params = sum(p.numel() for p in model.parameters())
     total_m = total_params / 1_000_000
     print(f"Total parameters: {total_m:.2f}M")
 
-    start_step = maybe_load_checkpoint(model, optimizer, resume_path)
-
-    for step in range(start_step, max_iters):
+    for step in range(0, G_MAX_ITERS):
         x, y = get_batch(state, split="train")
         loss = compute_loss(model, x, y)
 
@@ -233,12 +187,6 @@ def initialize_and_train(state: State,
         if (step + 1) % 100 == 0:
             val_loss = evaluate_loss(model, state)
             print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
-
-        maybe_save_checkpoint(
-            model=model, optimizer=optimizer,
-            vocab_size=state.vocab_size,
-            step=step, resume_path=resume_path,
-        )
 
     return model
 
@@ -264,17 +212,9 @@ def generateText(model, state: State, start_text, max_tokens=50):
     return text
 
 def main():
-    #basic argument parsing for checkpoint resume/save
-    p = argparse.ArgumentParser(description="Train TinyGPT")
-    p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
-    checkpoint_path = p.parse_args().checkpoint
-
     #build the state and train the model
     state = build_state()
-    model = initialize_and_train(
-        state,
-        resume_path=checkpoint_path if checkpoint_path else None,
-    )
+    model = initialize_and_train(state)
 
     #Lets generate some text from the trained model
     sample = generateText(
