@@ -75,7 +75,7 @@ Training Loss = 2.67 with these params on 3/16/2026:
   - Resume loads without error and continues from saved step
 - Add generation tests:
   - `generateText` returns a non-empty string and length grows with `max_tokens`
-- Add CLI smoke test for `--resume`
+- Add CLI smoke test for `--checkpoint`
 - Add a GitHub Actions workflow to run tests on CPU
 
 ## 📋 Test Plan Backlog
@@ -90,5 +90,5 @@ Keep this plan here so we can pick it up next week.
 - Checkpoint save content and cadence
 - Resume logic restores model and optimizer state
 - Text generation length and basic sanity checks
-- CLI smoke test for `--resume`
+- CLI smoke test for `--checkpoint`
 - CPU/GPU device handling

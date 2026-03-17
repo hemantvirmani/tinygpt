@@ -167,12 +167,13 @@ def maybe_save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     step: int,
-    save_every: int,
-    checkpoint_dir: str,
+    resume_path: str | None,
     vocab_size: int,
 ) -> None:
-    if not save_every or save_every <= 0 or (step + 1) % save_every != 0:
+    if resume_path is None or (step + 1) % 500 != 0:
         return
+    checkpoint_dir = os.path.dirname(resume_path) or "checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)
     ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
     torch.save(
         {
@@ -198,18 +199,12 @@ def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
 
 def initialize_and_train(state: State,
                          max_iters: int = G_MAX_ITERS,
-                         print_every: int = 100,
-                         save_every: int = 500,
-                         checkpoint_dir: str = "checkpoints",
                          resume_path: str | None = None) -> nn.Module:
     """Create, train, and return a `TinyGPT` model.
 
     Args:
         state: training state (tokenizer, data, vocab_size).
         max_iters: number of training iterations.
-        print_every: how often to print loss and a sample.
-        save_every: checkpoint every N steps (0 to disable).
-        checkpoint_dir: directory to write checkpoints.
         resume_path: path to a checkpoint file to resume from.
 
     Returns:
@@ -226,9 +221,6 @@ def initialize_and_train(state: State,
 
     start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
-    if save_every and save_every > 0:
-        os.makedirs(checkpoint_dir, exist_ok=True)
-
     for step in range(start_step, max_iters):
 
         x, y = get_batch(state, split="train")
@@ -238,17 +230,14 @@ def initialize_and_train(state: State,
         loss.backward()
         optimizer.step()
 
-        if (step + 1) % print_every == 0:
+        if (step + 1) % 100 == 0:
             val_loss = evaluate_loss(model, state)
             print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
 
         maybe_save_checkpoint(
-            model=model,
-            optimizer=optimizer,
-            step=step,
-            save_every=save_every,
-            checkpoint_dir=checkpoint_dir,
+            model=model, optimizer=optimizer,
             vocab_size=state.vocab_size,
+            step=step, resume_path=resume_path,
         )
 
     return model
@@ -275,14 +264,23 @@ def generateText(model, state: State, start_text, max_tokens=50):
     return text
 
 def main():
-    #basic argument parsing for checkpoint resume
+
+    resume_path = None
+
+    #basic argument parsing for checkpoint resume/save
     p = argparse.ArgumentParser(description="Train TinyGPT")
-    p.add_argument("--resume", metavar="PATH", help="Path to checkpoint to resume from")
-    resume_path = p.parse_args().resume
+    p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
+    checkpoint_path = p.parse_args().checkpoint
+
+    if checkpoint_path:
+        resume_path = checkpoint_path
 
     #build the state and train the model
     state = build_state()
-    model = initialize_and_train(state, resume_path=resume_path)
+    model = initialize_and_train(
+        state,
+        resume_path=resume_path,
+    )
 
     #Lets generate some text from the trained model
     sample = generateText(
