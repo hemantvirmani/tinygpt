@@ -8,6 +8,16 @@ We start with a minimal, readable model in `tinygpt.py` and will grow the codeba
 
 Tokenization uses GPT-2's `tiktoken` encoding.
 
+## 🧪 FemtoGPT
+
+FemtoGPT will use the Shakespeare dataset and will be a smaller version of GPT. It will use a super basic tokenizer and move away from GPT-2.
+
+This will be a practice project for Karpathy's "Let's build the GPT Tokenizer".
+
+```text
+https://www.youtube.com/watch?v=zduSFxRajkE
+```
+
 ## 💾 Checkpoints
 
 Training saves a checkpoint every 500 steps to `checkpoints/` as `tinygpt_step_<N>.pt`.
@@ -33,7 +43,7 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 - Fine Tuning
 - RLHF
 
-## ðŸ“‚ Dataset
+## 📂 Dataset
 
 Uses Shakespeare (Karpathy's dataset) as starting point.
 
@@ -47,16 +57,16 @@ Uses Shakespeare (Karpathy's dataset) as starting point.
 
 Tokenizer: `tiktoken` with GPT-2 encoding, and `<|endoftext|>` is allowed as a special token.
 
-## ðŸ“ˆ Expected Results
+## 📈 Expected Results
 
 Train Loss: \~1.2 -- 2.0\
 Val Loss: \~1.5 -- 2.5
 
-## ðŸš€ Learning Roadmap
+## 🚀 Learning Roadmap
 
-Run â†’ Understand â†’ Control â†’ Scale â†’ Customize
+Run → Understand → Control → Scale → Customize
 
-## ðŸ™Œ Credits
+## 🙌 Credits
 
 Inspired by Andrej Karpathy and GPT architectures. Used ChatGPT for the code
 
