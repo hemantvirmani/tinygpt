@@ -22,8 +22,7 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 ## 🧩 TODO (Living List, not in order of implementation)
 
-- Add a proper dataset loader with train/val splits, track train & val loss
-- Improve Reproducibility (torch.manual_seed), Logging
+- Logging improvements
 - Add dropout layer
 - multi head attention: different heads learn different patterns
 - Temperature sampling, Top-k / Top-p sampling

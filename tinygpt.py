@@ -11,8 +11,8 @@ from transformers import AutoTokenizer
 G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 64
 G_N_EMBD = 128
-G_MAX_ITERS = 5000
-G_LR = 1e-3
+G_MAX_ITERS = 8000
+G_LR = 5e-4
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
 
