@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os, requests
+import argparse
 from dataclasses import dataclass
 from transformers import AutoTokenizer
 
@@ -130,13 +131,19 @@ class TinyGPT(nn.Module):
 
 def initialize_and_train(state: State,
                          max_iters: int = G_MAX_ITERS,
-                         print_every: int = 100) -> nn.Module:
+                         print_every: int = 100,
+                         save_every: int = 500,
+                         checkpoint_dir: str = "checkpoints",
+                         resume_path: str | None = None) -> nn.Module:
     """Create, train, and return a `TinyGPT` model.
 
     Args:
         state: training state (tokenizer, data, vocab_size).
         max_iters: number of training iterations.
         print_every: how often to print loss and a sample.
+        save_every: checkpoint every N steps (0 to disable).
+        checkpoint_dir: directory to write checkpoints.
+        resume_path: path to a checkpoint file to resume from.
 
     Returns:
         Trained `TinyGPT` instance (on `device`).
@@ -151,7 +158,18 @@ def initialize_and_train(state: State,
     print(f"Total parameters: {total_m:.2f}M")
     print(model)
 
-    for step in range(max_iters):
+    start_step = 0
+    if resume_path:
+        ckpt = torch.load(resume_path, map_location=G_DEVICE)
+        model.load_state_dict(ckpt["model_state"])
+        optimizer.load_state_dict(ckpt["optimizer_state"])
+        start_step = int(ckpt.get("step", 0))
+        print(f"Resumed from {resume_path} at step {start_step}")
+
+    if save_every and save_every > 0:
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+    for step in range(start_step, max_iters):
 
         x, y = get_batch(state)
         logits = model(x)
@@ -169,6 +187,19 @@ def initialize_and_train(state: State,
 
         if (step + 1) % print_every == 0:
             print(f"step {step+1}: loss {loss.item()}")
+
+        if save_every and save_every > 0 and (step + 1) % save_every == 0:
+            ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
+            torch.save(
+                {
+                    "step": step + 1,
+                    "model_state": model.state_dict(),
+                    "optimizer_state": optimizer.state_dict(),
+                    "vocab_size": state.vocab_size,
+                },
+                ckpt_path,
+            )
+            print(f"Saved checkpoint: {ckpt_path}")
 
     return model
 
@@ -194,9 +225,16 @@ def generateText(model, state: State, start_text, max_tokens=50):
 
     return text
 
+def parse_args():
+    p = argparse.ArgumentParser(description="Train TinyGPT")
+    p.add_argument("--resume", metavar="PATH", help="Path to checkpoint to resume from")
+    return p.parse_args()
+
+
 # Run training and capture trained model
+args = parse_args()
 state = build_state()
-model = initialize_and_train(state)
+model = initialize_and_train(state, resume_path=args.resume)
 
 
 #Lets generate some text from the trained model

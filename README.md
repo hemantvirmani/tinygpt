@@ -6,6 +6,10 @@ Goal is to understand how GPT learns, not just how to run it.
 
 We start with a minimal, readable model in `tinygpt.py` and will grow the codebase as we learn: better data pipelines, cleaner training loops, stronger modeling choices, and improved evaluation.
 
+## Checkpoints
+
+Training saves a checkpoint every 500 steps to `checkpoints/` as `tinygpt_step_<N>.pt`.
+
 ## Current Focus
 
 - Build a working toy GPT end-to-end.
@@ -34,10 +38,18 @@ Uses Tiny Shakespeare by default.
 Train Loss: \~1.2 -- 2.0\
 Val Loss: \~1.5 -- 2.5
 
-# 🚀 Learning Roadmap
+## 🚀 Learning Roadmap
 
 Run → Understand → Control → Scale → Customize
 
 ## 🙌 Credits
 
 Inspired by Andrej Karpathy and GPT architectures. Used ChatGPT for the code
+
+## My Notes
+Training Loss = 2.67 with these params on 3/16/2026:
+    G_BATCH_SIZE = 16
+    G_BLOCK_SIZE = 64
+    G_N_EMBD = 128
+    G_MAX_ITERS = 5000
+    G_LR = 1e-3
