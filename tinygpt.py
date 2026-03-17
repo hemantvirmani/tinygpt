@@ -3,36 +3,44 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os
+from dataclasses import dataclass
 from transformers import AutoTokenizer
 
 #Hyperparameters
-batch_size = 16
-block_size = 64
-n_embd = 128
-max_iters = 2000 # cpu = 800 maybe?
-lr = 3e-4
-device = "cuda" if torch.cuda.is_available() else "cpu"
+G_BATCH_SIZE = 16
+G_BLOCK_SIZE = 64
+G_N_EMBD = 128
+G_MAX_ITERS = 5000
+G_LR = 3e-4
+G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-#load dataset
-with open("shakespeare.txt", "r", encoding="utf-8") as f:
-    text = f.read()
-
-tokenizer = AutoTokenizer.from_pretrained("gpt2")
-
-tokens = tokenizer.encode(text)
-data=torch.tensor(tokens)
-
-vocab_size = tokenizer.vocab_size
+@dataclass
+class State:
+    tokenizer: AutoTokenizer
+    data: torch.Tensor
+    vocab_size: int
 
 
+def build_state() -> State:
+    # Load training dataset
+    with open("shakespeare.txt", "r", encoding="utf-8") as f:
+        text = f.read()
 
-#Load the batch
-def get_batch():
-    ix = torch.randint(len(data) - block_size, (batch_size,))
+    # Tokenizer and related objects
+    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokens = tokenizer.encode(text)
+    data = torch.tensor(tokens)
+    vocab_size = tokenizer.vocab_size
+    return State(tokenizer=tokenizer, data=data, vocab_size=vocab_size)
 
-    x = torch.stack([data[i:i+block_size] for i in ix])
-    y = torch.stack([data[i+1:i+block_size+1] for i in ix])
-    return x.to(device), y.to(device)
+
+#Load the batch from the dataset
+def get_batch(state: State):
+    ix = torch.randint(len(state.data) - G_BLOCK_SIZE, (G_BATCH_SIZE,))
+
+    x = torch.stack([state.data[i:i+G_BLOCK_SIZE] for i in ix])
+    y = torch.stack([state.data[i+1:i+G_BLOCK_SIZE+1] for i in ix])
+    return x.to(G_DEVICE), y.to(G_DEVICE)
 
 #Lets do some Self Attention
 class SelfAttention(nn.Module):
@@ -45,27 +53,26 @@ class SelfAttention(nn.Module):
 
         self.register_buffer(
             "mask", 
-            torch.tril(torch.ones(block_size, block_size))
+            torch.tril(torch.ones(G_BLOCK_SIZE, G_BLOCK_SIZE))
         )
 
-    def forward(self, x):
-
+    def forward(self, x): # Attention = softmax(similarity(q, k)) @ v
         B, T, C = x.shape
 
-        k = self.key(x)
-        q = self.query(x)
+        # Compute key, query, value projections for self-attention.
+        q = self.query(x) # `q` (query): what each token is "asking for".
+        k = self.key(x)  # `k` (key): content to be compared/matched against the query.
         
         weights1 = q @ k.transpose(-2, -1) / (C**0.5)
-        weights1 = weights1.masked_fill(self.mask[:T, :T] == 0, float('-inf'))
+        weights1 = weights1.masked_fill(self.mask[:T, :T] == 0, float('-inf')) #Mask ensures auto regressive behavior
         weights1 = F.softmax(weights1, dim=-1)
 
-        v = self.value(x)
+        v = self.value(x) # `v` (value): information returned.
         out = weights1 @ v
 
         return out
 
-
-#Lets do some Feed Forward Neural Network
+# Transformer block: self-attention plus feed-forward network
 class Block(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
@@ -87,50 +94,92 @@ class Block(nn.Module):
         return x
 
 #Lets Create the GPT model
-
 class TinyGPT(nn.Module):
-    def __init__(self):
+    def __init__(self, vocab_size: int):
         super().__init__()
 
-        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
-        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+        self.token_embedding_table = nn.Embedding(vocab_size, G_N_EMBD)
+        self.position_embedding_table = nn.Embedding(G_BLOCK_SIZE, G_N_EMBD)
 
         self.blocks = nn.Sequential(
-            Block(n_embd),
-            Block(n_embd),
-            Block(n_embd)
+            Block(G_N_EMBD),
+            Block(G_N_EMBD),
+            Block(G_N_EMBD)
         )
-        self.ln_f = nn.LayerNorm(n_embd)
-        self.head = nn.Linear(n_embd, vocab_size)
+        self.ln_f = nn.LayerNorm(G_N_EMBD)
+        self.head = nn.Linear(G_N_EMBD, vocab_size)
 
     def forward(self, idx):
         B, T = idx.shape
 
         tok = self.token_embedding_table(idx)
-        pos = self.position_embedding_table(torch.arange(T, device=device))
+        pos = self.position_embedding_table(torch.arange(T, device=G_DEVICE))
 
         x = tok + pos
         x = self.blocks(x)
-        x = self.ln_f(x)
-        logits = self.head(x)
+        x = self.ln_f(x) #normalizes the hidden states
+        logits = self.head(x) #final projection to logits for each token in the vocabulary
         return logits
 
-#        B, T, C = logits.shape
-#        logits = logits.view(B*T, C)
-#        targets = targets.view(B*T)
-#        loss = F.cross_entropy(logits, targets)
-#        return logits, loss
+def initialize_and_train(state: State,
+                         max_iters: int = G_MAX_ITERS,
+                         print_every: int = 100) -> nn.Module:
+    """Create, train, and return a `TinyGPT` model.
 
-# Text Generation
-def generate(model, tokenizer, start_text, max_tokens=50):
+    Args:
+        state: training state (tokenizer, data, vocab_size).
+        max_iters: number of training iterations.
+        print_every: how often to print loss and a sample.
+
+    Returns:
+        Trained `TinyGPT` instance (on `device`).
+    """
+
+    # Model Initialization
+    model = TinyGPT(state.vocab_size).to(G_DEVICE)
+    optimizer = torch.optim.Adam(model.parameters(), lr=G_LR)
+
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Total parameters: {total_params:,}")
+    print(model)
+
+    for step in range(max_iters):
+
+        x, y = get_batch(state)
+        logits = model(x)
+
+        B, T, C = logits.shape
+
+        logits = logits.view(B * T, C)
+        targets = y.view(B * T)
+
+        loss = F.cross_entropy(logits, targets)
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if (step + 1) % print_every == 0:
+            print(f"step {step+1}: loss {loss.item()}")
+
+    return model
+
+
+# Run training and capture trained model
+state = build_state()
+model = initialize_and_train(state)
+
+
+# Text Generation Function
+def generateText(model, state: State, start_text, max_tokens=50):
 
     model.eval()
 
-    tokens = tokenizer.encode(start_text)
-    idx = torch.tensor(tokens).unsqueeze(0).to(device)
+    tokens = state.tokenizer.encode(start_text)
+    idx = torch.tensor(tokens).unsqueeze(0).to(G_DEVICE)
 
     for _ in range(max_tokens):
-        idx_cond = idx[:, -block_size:]
+        idx_cond = idx[:, -G_BLOCK_SIZE:]
         logits = model(idx_cond)
         logits = logits[:, -1, :]
         probs = F.softmax(logits, dim=-1)
@@ -138,39 +187,18 @@ def generate(model, tokenizer, start_text, max_tokens=50):
         idx_next = torch.multinomial(probs, num_samples=1)
         idx = torch.cat((idx, idx_next), dim=1)
 
-    text = tokenizer.decode(idx[0].tolist())
+    text = state.tokenizer.decode(idx[0].tolist())
 
     return text
 
-#Model Initialization
-model = TinyGPT().to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+sample = generateText(
+    model,
+    state,
+    start_text="To be, or not to be: that is the question:",
+    max_tokens=100,
+)
 
-for step in range(max_iters):
+print("------ FINAL TEXT ------")
+print(sample)
+print("------------")
 
-    x, y = get_batch()
-    logits = model(x)
-
-    B, T, C = logits.shape
-
-    logits = logits.view(B*T, C)
-    targets = y.view(B*T)
-
-    loss = F.cross_entropy(logits, targets)
-
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-
-    if step % 100 == 0:
-        print(f"step {step}: loss {loss.item()}")
-
-        sample = generate(
-            model, 
-            tokenizer, 
-            start_text="To be, or not to be: that is the question:", 
-            max_tokens=60)
-        
-        print("------ SAMPLE TEXT ------")
-        print(sample)
-        print("------------")
