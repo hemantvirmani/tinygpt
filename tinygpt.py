@@ -156,7 +156,6 @@ def initialize_and_train(state: State,
     total_params = sum(p.numel() for p in model.parameters())
     total_m = total_params / 1_000_000
     print(f"Total parameters: {total_m:.2f}M")
-    print(model)
 
     start_step = 0
     if resume_path:
