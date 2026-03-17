@@ -11,8 +11,8 @@ from typing import Any
 #Hyperparameters
 G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 64
-G_N_EMBD = 64
-G_MAX_ITERS = 8000
+G_N_EMBD = 128
+G_MAX_ITERS = 2000
 G_LR = 5e-4
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
@@ -32,7 +32,7 @@ def build_state(split_ratio: float = 0.9) -> State:
     # Download dataset if needed
     if not os.path.exists("shakespeare.txt"):
         print("Downloading Tiny Shakespeare dataset...")
-        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        url = "https://raw.githubusercontent.com/hemantvirmani/tinygpt/master/shakespeare.txt"
         data = requests.get(url).text
         with open("shakespeare.txt", "w", encoding="utf-8") as f:
             f.write(data)

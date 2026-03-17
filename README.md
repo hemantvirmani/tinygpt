@@ -35,7 +35,17 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 ## ðŸ“‚ Dataset
 
-Uses Tiny Shakespeare by default.
+Uses Shakespeare (Karpathy's dataset) as starting point.
+
+### prepare_dataset.py
+
+`prepare_dataset.py` builds a larger mixed dataset (WikiText-103 + OpenWebText sample), cleans it, and saves:
+
+- `dataset.txt` (with `<|endoftext|>` separators)
+- `tokens.npy` (token IDs as NumPy array)
+- `dataset.bin` (binary token stream)
+
+Tokenizer: `tiktoken` with GPT-2 encoding, and `<|endoftext|>` is allowed as a special token.
 
 ## ðŸ“ˆ Expected Results
 
