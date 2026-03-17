@@ -199,13 +199,11 @@ def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
     return val_loss
 
 def initialize_and_train(state: State,
-                         max_iters: int = G_MAX_ITERS,
                          resume_path: str | None = None) -> nn.Module:
     """Create, train, and return a `TinyGPT` model.
 
     Args:
         state: training state (tokenizer, data, vocab_size).
-        max_iters: number of training iterations.
         resume_path: path to a checkpoint file to resume from.
 
     Returns:
@@ -222,7 +220,7 @@ def initialize_and_train(state: State,
 
     start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
-    for step in range(start_step, max_iters):
+    for step in range(start_step, G_MAX_ITERS):
         x, y = get_batch(state, split="train")
         loss = compute_loss(model, x, y)
 
