@@ -1,16 +1,17 @@
-# !pip install torch transformers requests
+# !pip install torch tiktoken requests
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os, requests
 import argparse
 from dataclasses import dataclass
-from transformers import AutoTokenizer
+import tiktoken
+from typing import Any
 
 #Hyperparameters
 G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 64
-G_N_EMBD = 128
+G_N_EMBD = 64
 G_MAX_ITERS = 8000
 G_LR = 5e-4
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -22,7 +23,7 @@ if torch.cuda.is_available():
 
 @dataclass
 class State:
-    tokenizer: AutoTokenizer
+    tokenizer: Any
     train_data: torch.Tensor
     val_data: torch.Tensor
     vocab_size: int
@@ -41,10 +42,10 @@ def build_state(split_ratio: float = 0.9) -> State:
         text = f.read()
 
     # Tokenizer and related objects
-    tokenizer = AutoTokenizer.from_pretrained("gpt2")
+    tokenizer = tiktoken.get_encoding("gpt2")
     tokens = tokenizer.encode(text)
     data = torch.tensor(tokens)
-    vocab_size = tokenizer.vocab_size
+    vocab_size = tokenizer.n_vocab
     split_idx = int(len(data) * split_ratio)
     train_data = data[:split_idx]
     val_data = data[split_idx:]

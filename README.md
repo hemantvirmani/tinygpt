@@ -6,6 +6,8 @@ Goal is to understand how GPT learns, not just how to run it.
 
 We start with a minimal, readable model in `tinygpt.py` and will grow the codebase as we learn: better data pipelines, cleaner training loops, stronger modeling choices, and improved evaluation.
 
+Tokenization uses GPT-2's `tiktoken` encoding.
+
 ## 💾 Checkpoints
 
 Training saves a checkpoint every 500 steps to `checkpoints/` as `tinygpt_step_<N>.pt`.
