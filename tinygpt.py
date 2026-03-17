@@ -12,11 +12,15 @@ from typing import Any
 G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 64
 G_N_EMBD = 128
-G_MAX_ITERS = 2000
-G_LR = 5e-4
+G_MAX_ITERS = 5000
+G_LR = 1e-3
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
 
+#Static Constants
+BINARY_DATASET_FILENAME = "dataset.bin"
+
+#Random seed for reproducibility
 torch.manual_seed(G_SEED)
 if torch.cuda.is_available():
     torch.cuda.manual_seed_all(G_SEED)
@@ -29,24 +33,14 @@ class State:
     vocab_size: int
 
 def build_state(split_ratio: float = 0.9) -> State:
-    # Download dataset if needed
-    if not os.path.exists("shakespeare.txt"):
-        print("Downloading Tiny Shakespeare dataset...")
-        url = "https://raw.githubusercontent.com/hemantvirmani/tinygpt/master/shakespeare.txt"
-        data = requests.get(url).text
-        with open("shakespeare.txt", "w", encoding="utf-8") as f:
-            f.write(data)
-
-    # Load training dataset
-    with open("shakespeare.txt", "r", encoding="utf-8") as f:
-        text = f.read()
-
     # Tokenizer and related objects
     tokenizer = tiktoken.get_encoding("gpt2")
-    tokens = tokenizer.encode(text)
-    data = torch.tensor(tokens)
     vocab_size = tokenizer.n_vocab
-    split_idx = int(len(data) * split_ratio)
+    # Load training and validation dataset
+    import numpy as np
+    data = np.memmap(BINARY_DATASET_FILENAME, dtype=np.uint16, mode="r")
+    data_len = len(data)
+    split_idx = int(data_len * split_ratio)
     train_data = data[:split_idx]
     val_data = data[split_idx:]
     return State(tokenizer=tokenizer, train_data=train_data, val_data=val_data, vocab_size=vocab_size)
@@ -57,8 +51,9 @@ def get_batch(state: State, split: str = "train"):
     data = state.train_data if split == "train" else state.val_data
     ix = torch.randint(len(data) - G_BLOCK_SIZE, (G_BATCH_SIZE,))
 
-    x = torch.stack([data[i:i+G_BLOCK_SIZE] for i in ix])
-    y = torch.stack([data[i+1:i+G_BLOCK_SIZE+1] for i in ix])
+    # Convert memmap slices to torch.long for embedding lookup without loading all data into RAM.
+    x = torch.stack([torch.tensor(data[i:i+G_BLOCK_SIZE], dtype=torch.long) for i in ix.tolist()])
+    y = torch.stack([torch.tensor(data[i+1:i+G_BLOCK_SIZE+1], dtype=torch.long) for i in ix.tolist()])
     return x.to(G_DEVICE), y.to(G_DEVICE)
 
 #Lets do some Self Attention
@@ -266,6 +261,11 @@ def main():
     p = argparse.ArgumentParser(description="Train TinyGPT")
     p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
     checkpoint_path = p.parse_args().checkpoint
+
+    # if dataset.bin does not exist, error out.
+    if not os.path.exists(BINARY_DATASET_FILENAME):
+        print(f"Error: {BINARY_DATASET_FILENAME} not found. Use prepare_dataset.py to create the {BINARY_DATASET_FILENAME} file before running this script.")
+        return
 
     #build the state and train the model
     state = build_state()
