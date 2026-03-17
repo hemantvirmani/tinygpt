@@ -194,16 +194,18 @@ def generateText(model, state: State, start_text, max_tokens=50):
 
     return text
 
+# Run training and capture trained model
+state = build_state()
+model = initialize_and_train(state)
+
+
+#Lets generate some text from the trained model
 sample = generateText(
     model,
     state,
     start_text="To be, or not to be: that is the question:",
     max_tokens=100,
 )
-
-# Run training and capture trained model
-state = build_state()
-model = initialize_and_train(state)
 
 print("------ FINAL TEXT ------")
 print(sample)
