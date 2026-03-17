@@ -10,6 +10,10 @@ We start with a minimal, readable model in `tinygpt.py` and will grow the codeba
 
 Training saves a checkpoint every 500 steps to `checkpoints/` as `tinygpt_step_<N>.pt`.
 
+## 🎛️ Reproducibility
+
+We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This seeds both CPU and CUDA (when available).
+
 ## 🎯 Current Focus
 
 - Build a working toy GPT end-to-end.

@@ -14,14 +14,20 @@ G_N_EMBD = 128
 G_MAX_ITERS = 5000
 G_LR = 1e-3
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+G_SEED = 1947
+
+torch.manual_seed(G_SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(G_SEED)
 
 @dataclass
 class State:
     tokenizer: AutoTokenizer
-    data: torch.Tensor
+    train_data: torch.Tensor
+    val_data: torch.Tensor
     vocab_size: int
 
-def build_state() -> State:
+def build_state(split_ratio: float = 0.9) -> State:
     # Download dataset if needed
     if not os.path.exists("shakespeare.txt"):
         print("Downloading Tiny Shakespeare dataset...")
@@ -39,15 +45,19 @@ def build_state() -> State:
     tokens = tokenizer.encode(text)
     data = torch.tensor(tokens)
     vocab_size = tokenizer.vocab_size
-    return State(tokenizer=tokenizer, data=data, vocab_size=vocab_size)
+    split_idx = int(len(data) * split_ratio)
+    train_data = data[:split_idx]
+    val_data = data[split_idx:]
+    return State(tokenizer=tokenizer, train_data=train_data, val_data=val_data, vocab_size=vocab_size)
 
 
 #Load the batch from the dataset
-def get_batch(state: State):
-    ix = torch.randint(len(state.data) - G_BLOCK_SIZE, (G_BATCH_SIZE,))
+def get_batch(state: State, split: str = "train"):
+    data = state.train_data if split == "train" else state.val_data
+    ix = torch.randint(len(data) - G_BLOCK_SIZE, (G_BATCH_SIZE,))
 
-    x = torch.stack([state.data[i:i+G_BLOCK_SIZE] for i in ix])
-    y = torch.stack([state.data[i+1:i+G_BLOCK_SIZE+1] for i in ix])
+    x = torch.stack([data[i:i+G_BLOCK_SIZE] for i in ix])
+    y = torch.stack([data[i+1:i+G_BLOCK_SIZE+1] for i in ix])
     return x.to(G_DEVICE), y.to(G_DEVICE)
 
 #Lets do some Self Attention
@@ -129,6 +139,63 @@ class TinyGPT(nn.Module):
         logits = self.head(x) #final projection to logits for each token in the vocabulary
         return logits
 
+
+def compute_loss(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    logits = model(x)
+    B, T, C = logits.shape
+    logits = logits.view(B * T, C)
+    targets = y.view(B * T)
+    return F.cross_entropy(logits, targets)
+
+
+def maybe_load_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    resume_path: str | None,
+) -> int:
+    if not resume_path:
+        return 0
+    ckpt = torch.load(resume_path, map_location=G_DEVICE)
+    model.load_state_dict(ckpt["model_state"])
+    optimizer.load_state_dict(ckpt["optimizer_state"])
+    start_step = int(ckpt.get("step", 0))
+    print(f"Resumed from {resume_path} at step {start_step}")
+    return start_step
+
+
+def maybe_save_checkpoint(
+    model: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    step: int,
+    save_every: int,
+    checkpoint_dir: str,
+    vocab_size: int,
+) -> None:
+    if not save_every or save_every <= 0 or (step + 1) % save_every != 0:
+        return
+    ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
+    torch.save(
+        {
+            "step": step + 1,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "vocab_size": vocab_size,
+        },
+        ckpt_path,
+    )
+    print(f"Saved checkpoint: {ckpt_path}")
+
+
+def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
+    was_training = model.training
+    model.eval()
+    with torch.no_grad():
+        val_x, val_y = get_batch(state, split="val")
+        val_loss = compute_loss(model, val_x, val_y)
+    if was_training:
+        model.train()
+    return val_loss
+
 def initialize_and_train(state: State,
                          max_iters: int = G_MAX_ITERS,
                          print_every: int = 100,
@@ -157,48 +224,32 @@ def initialize_and_train(state: State,
     total_m = total_params / 1_000_000
     print(f"Total parameters: {total_m:.2f}M")
 
-    start_step = 0
-    if resume_path:
-        ckpt = torch.load(resume_path, map_location=G_DEVICE)
-        model.load_state_dict(ckpt["model_state"])
-        optimizer.load_state_dict(ckpt["optimizer_state"])
-        start_step = int(ckpt.get("step", 0))
-        print(f"Resumed from {resume_path} at step {start_step}")
+    start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
     if save_every and save_every > 0:
         os.makedirs(checkpoint_dir, exist_ok=True)
 
     for step in range(start_step, max_iters):
 
-        x, y = get_batch(state)
-        logits = model(x)
-
-        B, T, C = logits.shape
-
-        logits = logits.view(B * T, C)
-        targets = y.view(B * T)
-
-        loss = F.cross_entropy(logits, targets)
+        x, y = get_batch(state, split="train")
+        loss = compute_loss(model, x, y)
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
         if (step + 1) % print_every == 0:
-            print(f"step {step+1}: loss {loss.item()}")
+            val_loss = evaluate_loss(model, state)
+            print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
 
-        if save_every and save_every > 0 and (step + 1) % save_every == 0:
-            ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
-            torch.save(
-                {
-                    "step": step + 1,
-                    "model_state": model.state_dict(),
-                    "optimizer_state": optimizer.state_dict(),
-                    "vocab_size": state.vocab_size,
-                },
-                ckpt_path,
-            )
-            print(f"Saved checkpoint: {ckpt_path}")
+        maybe_save_checkpoint(
+            model=model,
+            optimizer=optimizer,
+            step=step,
+            save_every=save_every,
+            checkpoint_dir=checkpoint_dir,
+            vocab_size=state.vocab_size,
+        )
 
     return model
 
@@ -221,30 +272,30 @@ def generateText(model, state: State, start_text, max_tokens=50):
         idx = torch.cat((idx, idx_next), dim=1)
 
     text = state.tokenizer.decode(idx[0].tolist())
-
     return text
 
-def parse_args():
+def main():
+    #basic argument parsing for checkpoint resume
     p = argparse.ArgumentParser(description="Train TinyGPT")
     p.add_argument("--resume", metavar="PATH", help="Path to checkpoint to resume from")
-    return p.parse_args()
+    resume_path = p.parse_args().resume
 
+    #build the state and train the model
+    state = build_state()
+    model = initialize_and_train(state, resume_path=resume_path)
 
-# Run training and capture trained model
-args = parse_args()
-state = build_state()
-model = initialize_and_train(state, resume_path=args.resume)
+    #Lets generate some text from the trained model
+    sample = generateText(
+        model,
+        state,
+        start_text="To be, or not to be: that is the question:",
+        max_tokens=100,
+    )
 
+    #Lets see what we got!
+    print("------ FINAL TEXT ------")
+    print(sample)
+    print("------------")
 
-#Lets generate some text from the trained model
-sample = generateText(
-    model,
-    state,
-    start_text="To be, or not to be: that is the question:",
-    max_tokens=100,
-)
-
-print("------ FINAL TEXT ------")
-print(sample)
-print("------------")
-
+if __name__ == "__main__":
+    main()
