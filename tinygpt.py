@@ -1,4 +1,6 @@
 # !pip install torch tiktoken requests huggingface_hub
+from sched import scheduler
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,10 +13,14 @@ from typing import Any
 
 #Hyperparameters
 G_BATCH_SIZE = 64
-G_BLOCK_SIZE = 64
-G_N_EMBD = 128
+G_BLOCK_SIZE = 128
+G_N_EMBD = 256
 G_MAX_ITERS = 5000
 G_LR = 1e-3
+G_N_LAYERS = 8
+G_WEIGHT_DECAY = 0.1
+G_GRAD_CLIP = 1.0
+
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
 
@@ -116,11 +122,8 @@ class TinyGPT(nn.Module):
         self.token_embedding_table = nn.Embedding(vocab_size, G_N_EMBD)
         self.position_embedding_table = nn.Embedding(G_BLOCK_SIZE, G_N_EMBD)
 
-        self.blocks = nn.Sequential(
-            Block(G_N_EMBD),
-            Block(G_N_EMBD),
-            Block(G_N_EMBD)
-        )
+        self.blocks = nn.Sequential(*[Block(G_N_EMBD) for _ in range(G_N_LAYERS)]) #Stacking multiple blocks for deeper architecture
+
         self.ln_f = nn.LayerNorm(G_N_EMBD)
         self.head = nn.Linear(G_N_EMBD, vocab_size)
 
@@ -208,7 +211,10 @@ def initialize_and_train(state: State,
 
     # Model Initialization
     model = TinyGPT(state.vocab_size).to(G_DEVICE)
-    optimizer = torch.optim.Adam(model.parameters(), lr=G_LR)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=G_LR, weight_decay=G_WEIGHT_DECAY) #weighted decay for better generalization and AdamW optimizer for better convergence
+    
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR( #  SCHEDULER: Define the Cosine Annealing curve for learning rate decay
+        optimizer, T_max=G_MAX_ITERS, eta_min=1e-5)
 
     total_params = sum(p.numel() for p in model.parameters())
     total_m = total_params / 1_000_000
@@ -222,7 +228,10 @@ def initialize_and_train(state: State,
 
         optimizer.zero_grad()
         loss.backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
         optimizer.step()
+        scheduler.step() # STEP THE SCHEDULER: Update the learning rate every iteration
 
         if (step + 1) % 100 == 0:
             val_loss = evaluate_loss(model, state)
