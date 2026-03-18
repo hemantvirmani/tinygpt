@@ -1,7 +1,8 @@
 .venv/
 checkpoints/
-
+__pycache__/
 
 dataset.txt
 tokens.npy
 dataset.bin
+

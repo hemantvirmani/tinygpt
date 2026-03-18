@@ -1,15 +1,16 @@
-# !pip install torch tiktoken requests
+# !pip install torch tiktoken requests huggingface_hub
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import os, requests
+import shutil
 import argparse
 from dataclasses import dataclass
 import tiktoken
 from typing import Any
 
 #Hyperparameters
-G_BATCH_SIZE = 16
+G_BATCH_SIZE = 64
 G_BLOCK_SIZE = 64
 G_N_EMBD = 128
 G_MAX_ITERS = 5000
@@ -32,13 +33,13 @@ class State:
     val_data: torch.Tensor
     vocab_size: int
 
-def build_state(split_ratio: float = 0.9) -> State:
+def build_state(split_ratio: float = 0.8, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
     # Tokenizer and related objects
     tokenizer = tiktoken.get_encoding("gpt2")
     vocab_size = tokenizer.n_vocab
     # Load training and validation dataset
     import numpy as np
-    data = np.memmap(BINARY_DATASET_FILENAME, dtype=np.uint16, mode="r")
+    data = np.memmap(dataset_path, dtype=np.uint16, mode="r")
     data_len = len(data)
     split_idx = int(data_len * split_ratio)
     train_data = data[:split_idx]
@@ -261,14 +262,22 @@ def main():
     p = argparse.ArgumentParser(description="Train TinyGPT")
     p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
     checkpoint_path = p.parse_args().checkpoint
+    file_path = BINARY_DATASET_FILENAME
 
     # if dataset.bin does not exist, error out.
     if not os.path.exists(BINARY_DATASET_FILENAME):
-        print(f"Error: {BINARY_DATASET_FILENAME} not found. Use prepare_dataset.py to create the {BINARY_DATASET_FILENAME} file before running this script.")
-        return
+        from huggingface_hub import hf_hub_download
+        # Download the specific .bin file from your repository
+        repo_id = "hemantvirmani/gpt-training-dataset"
+        filename = "dataset.bin"
+
+        print(f"Downloading {filename} from Hugging Face...")
+        file_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
+        shutil.copyfile(file_path, BINARY_DATASET_FILENAME)
+        file_path = BINARY_DATASET_FILENAME
 
     #build the state and train the model
-    state = build_state()
+    state = build_state(dataset_path=file_path)
     model = initialize_and_train(
         state,
         resume_path=checkpoint_path if checkpoint_path else None,
@@ -277,7 +286,7 @@ def main():
     #Lets generate some text from the trained model
     sample = generateText(
         model, state,
-        start_text="To be, or not to be: that is the question:",
+        start_text="India is a country of ",
         max_tokens=100,
     )
 

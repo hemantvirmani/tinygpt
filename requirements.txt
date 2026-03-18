@@ -2,3 +2,4 @@ torch
 tiktoken
 requests
 datasets
+huggingface_hub
