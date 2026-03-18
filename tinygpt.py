@@ -1,6 +1,6 @@
-# !pip install torch tiktoken requests huggingface_hub
-from sched import scheduler
+# !pip install torch tiktoken requests huggingface_hub matplotlib
 
+from sched import scheduler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import tiktoken
 from typing import Any
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 #Hyperparameters
@@ -28,6 +29,7 @@ G_SEED = 1947
 
 #Static Constants
 BINARY_DATASET_FILENAME = "dataset.bin"
+LOAD_CHECKPOINT = False
 
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
@@ -58,11 +60,15 @@ def build_state(split_ratio: float = 0.8, dataset_path: str = BINARY_DATASET_FIL
 #Load the batch from the dataset
 def get_batch(state: State, split: str = "train"):
     data = state.train_data if split == "train" else state.val_data
-    ix = torch.randint(len(data) - G_BLOCK_SIZE, (G_BATCH_SIZE,))
+    ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (G_BATCH_SIZE,))
 
-    # Convert memmap slices to torch.long for embedding lookup without loading all data into RAM.
-    x = torch.stack([torch.tensor(data[i:i+G_BLOCK_SIZE], dtype=torch.long) for i in ix.tolist()])
-    y = torch.stack([torch.tensor(data[i+1:i+G_BLOCK_SIZE+1], dtype=torch.long) for i in ix.tolist()])
+    # Convert the full batch slice in one go, then reshape to reduce overhead.
+    ix_np = ix.cpu().numpy()
+    offsets = np.arange(G_BLOCK_SIZE + 1)
+    # Index memmap directly to avoid materializing the full dataset in RAM.
+    batch = data[ix_np[:, None] + offsets]
+    x = torch.from_numpy(batch[:, :-1]).long()
+    y = torch.from_numpy(batch[:, 1:]).long()
     return x.to(G_DEVICE), y.to(G_DEVICE)
 
 #Lets do some Self Attention
@@ -155,8 +161,9 @@ def maybe_load_checkpoint(
     optimizer: torch.optim.Optimizer,
     resume_path: str | None,
 ) -> int:
-    if not resume_path:
+    if not resume_path or LOAD_CHECKPOINT == False:
         return 0
+    
     ckpt = torch.load(resume_path, map_location=G_DEVICE)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
@@ -176,7 +183,7 @@ def maybe_save_checkpoint(
         return
     checkpoint_dir = os.path.dirname(resume_path) or "checkpoints"
     os.makedirs(checkpoint_dir, exist_ok=True)
-    ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_step_{step+1}.pt")
+    ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_latest.pt")
     torch.save(
         {
             "step": step + 1,
@@ -323,7 +330,7 @@ def main():
     #Lets generate some text from the trained model
     sample = generateText(
         model, state,
-        start_text="India is a country of ",
+        start_text="USA is a country of ",
         max_tokens=100,
     )
 
