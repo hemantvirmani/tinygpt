@@ -10,14 +10,16 @@ import argparse
 from dataclasses import dataclass
 import tiktoken
 from typing import Any
+import matplotlib.pyplot as plt
+
 
 #Hyperparameters
 G_BATCH_SIZE = 64
 G_BLOCK_SIZE = 128
 G_N_EMBD = 256
-G_MAX_ITERS = 5000
-G_LR = 1e-3
-G_N_LAYERS = 8
+G_MAX_ITERS = 10000
+G_LR = 1e-4
+G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
 
@@ -197,6 +199,23 @@ def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
         model.train()
     return val_loss
 
+def plot_losses(steps, train_losses, val_losses):
+    if not steps:
+        return
+
+    output_path = "loss_curve.png"
+    plt.figure(figsize=(10, 6))
+    plt.plot(steps, train_losses, label="train")
+    plt.plot(steps, val_losses, label="val")
+    plt.xlabel("step")
+    plt.ylabel("loss")
+    plt.title("Training vs Validation Loss")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path)
+    plt.show()
+    plt.close()
+
 def initialize_and_train(state: State,
                          resume_path: str | None = None) -> nn.Module:
     """Create, train, and return a `TinyGPT` model.
@@ -222,11 +241,15 @@ def initialize_and_train(state: State,
 
     start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
+    steps = []
+    train_losses = []
+    val_losses = []
+
     for step in range(start_step, G_MAX_ITERS):
+        optimizer.zero_grad(set_to_none=True) # More efficient than zero_grad() as it avoids unnecessary memory operations when gradients are not needed.
+
         x, y = get_batch(state, split="train")
         loss = compute_loss(model, x, y)
-
-        optimizer.zero_grad()
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
@@ -235,6 +258,9 @@ def initialize_and_train(state: State,
 
         if (step + 1) % 100 == 0:
             val_loss = evaluate_loss(model, state)
+            steps.append(step + 1)
+            train_losses.append(loss.item())
+            val_losses.append(val_loss.item())
             print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
 
         maybe_save_checkpoint(
@@ -242,6 +268,8 @@ def initialize_and_train(state: State,
             vocab_size=state.vocab_size,
             step=step, resume_path=resume_path,
         )
+
+    plot_losses(steps, train_losses, val_losses)
 
     return model
 

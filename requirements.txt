@@ -3,3 +3,4 @@ tiktoken
 requests
 datasets
 huggingface_hub
+matplotlib
