@@ -15,14 +15,15 @@ import numpy as np
 
 
 #Hyperparameters
-G_BATCH_SIZE = 64
-G_BLOCK_SIZE = 128
-G_N_EMBD = 256
+G_BATCH_SIZE = 32
+G_BLOCK_SIZE = 256
+G_N_EMBD = 512
 G_MAX_ITERS = 10000
 G_LR = 1e-4
 G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
+G_WARMPUP_ITERS = 500
 
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
@@ -238,9 +239,23 @@ def initialize_and_train(state: State,
     # Model Initialization
     model = TinyGPT(state.vocab_size).to(G_DEVICE)
     optimizer = torch.optim.AdamW(model.parameters(), lr=G_LR, weight_decay=G_WEIGHT_DECAY) #weighted decay for better generalization and AdamW optimizer for better convergence
-    
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR( #  SCHEDULER: Define the Cosine Annealing curve for learning rate decay
-        optimizer, T_max=G_MAX_ITERS, eta_min=1e-5)
+
+    # 1. Define the Warmup Scheduler (Linear increase from a 10% of G_LR to G_LR)
+    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1,end_factor=1.0,
+        total_iters=G_WARMPUP_ITERS)
+
+    # 2. Define the Main Scheduler (Cosine decay from G_LR to eta_min)
+    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=(G_MAX_ITERS - G_WARMPUP_ITERS), 
+        eta_min=1e-5)
+
+    # 3. Combine them using SequentialLR - milestones=[500] means switch to the second scheduler at step 500
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer, 
+        schedulers=[scheduler_warmup, scheduler_cosine], 
+        milestones=[G_WARMPUP_ITERS]
+    )
 
     total_params = sum(p.numel() for p in model.parameters())
     total_m = total_params / 1_000_000
