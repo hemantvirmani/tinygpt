@@ -71,12 +71,12 @@ Run → Understand → Control → Scale → Customize
 Inspired by Andrej Karpathy and GPT architectures. Used ChatGPT for the code
 
 ## 📝 My Notes
-Training Loss = 2.67 with these params on 3/16/2026:
-    G_BATCH_SIZE = 16
+3/17: Femtogpt.py - Training Loss = 3.829 and Validation Loss: 4.6121
+    G_BATCH_SIZE = 64
     G_BLOCK_SIZE = 64
     G_N_EMBD = 128
-    G_MAX_ITERS = 5000
-    G_LR = 1e-3
+    G_MAX_ITERS = 2000
+    G_LR = 3e-4
 
 ## 🧪 Test Creation Plan
 

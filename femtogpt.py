@@ -12,7 +12,7 @@ from typing import Any
 G_BATCH_SIZE = 64
 G_BLOCK_SIZE = 64
 G_N_EMBD = 128
-G_MAX_ITERS = 5000
+G_MAX_ITERS = 2000
 G_LR = 3e-4
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1978
