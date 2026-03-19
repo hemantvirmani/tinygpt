@@ -166,7 +166,7 @@ class Block(nn.Module):
         x = x + self.ffwd(self.ln2(x))
         return x
 
-# super simple bigram model
+# super simple model
 class FemtoGPT(nn.Module):
 
     def __init__(self, state: State):

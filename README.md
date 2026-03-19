@@ -1,26 +1,14 @@
-# 🧠 TinyGPT
+# 🧪 FemtoGPT & 🧠 TinyGPT
 
-This repo is a learning-first GPT project. The goal is to understand how GPTs work by building a toy GPT model and progressively evolving it into a more serious implementation.
+This repo is a learning-first GPT project. My goal is to understand how GPTs work by building a toy GPT model and progressively evolving it into a more serious implementation. I want to understand how GPT learns, not just how to run it.
 
-Goal is to understand how GPT learns, not just how to run it.
+We start with a minimal, readable model in `femtoGPT.py` (0.2M parameter model) which is based on Andrej Karpathy's minimal GPT, utilizing a character-level tokenizer and trained on the Shakespeare dataset. I used [this youtube video](https://www.youtube.com/watch?v=kCc8FmEb1nY) to develop this model. Its character based tokenizer is custom-made inside tis code only, as described in the video too. It has all features including Multihead attention, etc.
 
-We start with a minimal, readable model in `tinygpt.py` and will grow the codebase as we learn: better data pipelines, cleaner training loops, stronger modeling choices, and improved evaluation.
-
-Tokenization uses GPT-2's `tiktoken` encoding.
-
-## 🧪 FemtoGPT
-
-FemtoGPT will use the Shakespeare dataset and will be a smaller version of GPT. It will use a super basic tokenizer and move away from GPT-2.
-
-This will be a practice project for Karpathy's "Let's build the GPT Tokenizer".
-
-```text
-https://www.youtube.com/watch?v=zduSFxRajkE
-```
+`tinygpt.py` will grow to a mature GPT-2/nano-gpt like transformer model (86.32M parameter as of 3/18). It uses tiktoken's GPT-2 tokenizer. This has loss of 4+ as of 3/18, which should come down as I learn better data pipelines, cleaner training loops, stronger modeling choices, and improved evaluation. 
 
 ## 💾 Checkpoints
 
-Training saves a checkpoint every 500 steps to `checkpoints/` as `tinygpt_step_<N>.pt`.
+Training saves a checkpoint every 500 steps in tinyGPT. Did not bother to save femtoGPT model yet.
 
 ## 🎛️ Reproducibility
 
@@ -34,7 +22,6 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 ## 🧩 TODO (Living List, not in order of implementation)
 
-- Add dropout layer
 - multi head attention: different heads learn different patterns
 - Temperature sampling, Top-k / Top-p sampling
 - Fine Tuning
@@ -42,7 +29,10 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 ## 📂 Dataset
 
-Uses Shakespeare (Karpathy's dataset) as starting point.
+FemtoGPT - Uses Shakespeare (Karpathy's dataset) as starting point.
+TinyGPT - It uses my custom dataset (see next sub section on how its prepared) which is hosted at following two places:
+* [https://huggingface.co/datasets/hemantvirmani/gpt-training-dataset](https://huggingface.co/datasets/hemantvirmani/gpt-training-dataset)
+* [https://www.kaggle.com/datasets/hemantvirmani/gpt-training-dataset](https://www.kaggle.com/datasets/hemantvirmani/gpt-training-dataset)
 
 ### prepare_dataset.py
 
@@ -54,10 +44,22 @@ Uses Shakespeare (Karpathy's dataset) as starting point.
 
 Tokenizer: `tiktoken` with GPT-2 encoding, and `<|endoftext|>` is allowed as a special token.
 
-## 📈 Expected Results
+## 📈 Results - TinyGPT
 
+### Target
 Train Loss: \~1.2 -- 2.0\
 Val Loss: \~1.5 -- 2.5
+
+### 📝 Current
+3/18: tinygpt.py - Loss: train 4.6248 | val 4.5250
+   * G_BATCH_SIZE = 32, G_BLOCK_SIZE = 256, G_N_EMBD = 512
+   * G_MAX_ITERS = 10000, G_LR = 1e-4
+
+3/18: Femtogpt.py - Training Loss = 1.6655 and Validation Loss: 1.8924
+   * G_BATCH_SIZE = 16, G_BLOCK_SIZE = 32, G_N_EMBD = 64
+   * G_MAX_ITERS = 5000, G_LR = 1e-3
+
+#### # FemtoGPT's loss is already in the target range.
 
 ## 🚀 Learning Roadmap
 
@@ -65,56 +67,7 @@ Run → Understand → Control → Scale → Customize
 
 ## 🙌 Credits
 
-Inspired by Andrej Karpathy and GPT architectures. Used ChatGPT for the code
-
-## 📝 My Notes
-3/18: tinygpt.py - Loss: train 5.1001 | val 5.1144
-    G_BATCH_SIZE = 32
-    G_BLOCK_SIZE = 256
-    G_N_EMBD = 512
-    G_MAX_ITERS = 10000
-    G_LR = 1e-4
-
-3/17: Femtogpt.py - Training Loss = 3.829 and Validation Loss: 4.6121
-    G_BATCH_SIZE = 64
-    G_BLOCK_SIZE = 64
-    G_N_EMBD = 128
-    G_MAX_ITERS = 2000
-    G_LR = 3e-4
-
-## 🧪 Test Creation Plan
-
-- Use `pytest` as the test runner.
-- Add a tiny fixture dataset under `tests/fixtures/` to avoid network calls.
-- Add unit tests for:
-  - `build_state` (tokenizer, data shape, vocab size)
-  - `get_batch` (shapes, device, x/y shift)
-  - `SelfAttention` mask behavior and shape
-  - `Block` shape preservation
-  - `TinyGPT` forward output shape
-- Add training loop smoke test:
-  - One or two steps produce finite loss and optimizer step runs
-- Add checkpoint tests:
-  - Checkpoints are created at `save_every`
-  - Checkpoint contents include `step`, `model_state`, `optimizer_state`, `vocab_size`
-- Add resume tests:
-  - Resume loads without error and continues from saved step
-- Add generation tests:
-  - `generateText` returns a non-empty string and length grows with `max_tokens`
-- Add CLI smoke test for `--checkpoint`
-- Add a GitHub Actions workflow to run tests on CPU
-
-## 📋 Test Plan Backlog
-
-Keep this plan here so we can pick it up next week.
-
-- State and data setup
-- Batching shapes, device placement, and x/y shift correctness
-- Self-attention masking and shape preservation
-- Block and model forward shapes
-- Training loop: loss is finite and optimizer step runs
-- Checkpoint save content and cadence
-- Resume logic restores model and optimizer state
-- Text generation length and basic sanity checks
-- CLI smoke test for `--checkpoint`
-- CPU/GPU device handling
+* Inspired by Andrej Karpathy and GPT architectures. 
+* For TinyGPT, I used ChatGPT (not codex) for helping with the starting code. 
+* Both ChatGPT and Gemini have answered a bunch of stupid questions to it.
+* Thanks to Kaggle for their generous 30 hrs per week free GPU access.
