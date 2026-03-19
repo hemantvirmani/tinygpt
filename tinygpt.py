@@ -26,6 +26,7 @@ G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 500
 G_DROPOUT_PROB = 0.0
+G_N_HEAD = 8
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #------Static Constants------#
 G_SEED = 1947
@@ -63,9 +64,9 @@ class SelfAttention(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
 
-        self.key = nn.Linear(n_embd, n_embd)
-        self.query = nn.Linear(n_embd, n_embd)
-        self.value = nn.Linear(n_embd, n_embd)
+        self.key = nn.Linear(G_N_EMBD, n_embd)
+        self.query = nn.Linear(G_N_EMBD, n_embd)
+        self.value = nn.Linear(G_N_EMBD, n_embd)
 
         self.register_buffer(
             "mask", 
@@ -90,24 +91,36 @@ class SelfAttention(nn.Module):
 
         return out
 
+class MultiHeadAttention(nn.Module):
+    def __init__(self, num_heads, head_size):
+        super().__init__()
+        self.heads = nn.ModuleList([SelfAttention(head_size) for _ in range(num_heads)])
+        self.proj = nn.Linear(G_N_EMBD, G_N_EMBD)
+        self.dropout = nn.Dropout(G_DROPOUT_PROB)
+
+    def forward(self, x):
+        out = torch.cat([h(x) for h in self.heads], dim=-1)
+        out = self.dropout(self.proj(out))
+        return out
+
 # Transformer block: self-attention plus feed-forward network
 class Block(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
-
-        self.sa = SelfAttention(n_embd)
+ 
+        # Each head gets an equal portion of the embedding dimension
+        self.mha = MultiHeadAttention(G_N_HEAD, n_embd // G_N_HEAD) 
         self.ffwd = nn.Sequential(
             nn.Linear(n_embd, 4*n_embd),
             nn.GELU(),
             nn.Linear(4*n_embd, n_embd),
             nn.Dropout(G_DROPOUT_PROB),
         )
-
         self.ln1 = nn.LayerNorm(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.sa(self.ln1(x))
+        x = x + self.mha(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
 
         return x

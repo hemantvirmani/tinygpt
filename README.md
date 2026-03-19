@@ -53,7 +53,7 @@ Val Loss: \~1.5 -- 2.5
 ### 📝 Current
 3/18: tinygpt.py - Loss: train 4.6248 | val 4.5250
    * G_BATCH_SIZE = 32, G_BLOCK_SIZE = 256, G_N_EMBD = 512
-   * G_MAX_ITERS = 10000, G_LR = 1e-4
+   * G_MAX_ITERS = 10000, G_LR = 3e-4
 
 3/18: Femtogpt.py - Training Loss = 1.6655 and Validation Loss: 1.8924
    * G_BATCH_SIZE = 16, G_BLOCK_SIZE = 32, G_N_EMBD = 64
