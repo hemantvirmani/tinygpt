@@ -13,7 +13,6 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
-
 #Hyperparameters
 G_BATCH_SIZE = 32
 G_BLOCK_SIZE = 256
@@ -25,14 +24,13 @@ G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 500
 G_DROPOUT_PROB = 0.0
-#------
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+#------Static Constants------#
 G_SEED = 1947
 G_SPLIT_RATIO = 0.8
-#Static Constants
 BINARY_DATASET_FILENAME = "dataset.bin"
 LOAD_CHECKPOINT = False
-
+CHECKPOINT_FILE = "tinygpt_latest.pt"
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
 if torch.cuda.is_available():
@@ -57,21 +55,6 @@ def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_D
     train_data = data[:split_idx]
     val_data = data[split_idx:]
     return State(tokenizer=tokenizer, train_data=train_data, val_data=val_data, vocab_size=vocab_size)
-
-
-#Load the batch from the dataset
-def get_batch(state: State, split: str = "train"):
-    data = state.train_data if split == "train" else state.val_data
-    ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (G_BATCH_SIZE,))
-
-    # Convert the full batch slice in one go, then reshape to reduce overhead.
-    ix_np = ix.cpu().numpy()
-    offsets = np.arange(G_BLOCK_SIZE + 1)
-    # Index memmap directly to avoid materializing the full dataset in RAM.
-    batch = data[ix_np[:, None] + offsets]
-    x = torch.from_numpy(batch[:, :-1]).long()
-    y = torch.from_numpy(batch[:, 1:]).long()
-    return x.to(G_DEVICE), y.to(G_DEVICE)
 
 #Lets do some Self Attention
 class SelfAttention(nn.Module):
@@ -153,24 +136,98 @@ class TinyGPT(nn.Module):
         logits = self.head(x) #final projection to logits for each token in the vocabulary
         return logits
 
-    def compute_loss(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+    #Load the batch from the dataset
+    def _get_batch(self, split: str = "train"):
+        data = self.state.train_data if split == "train" else self.state.val_data
+        ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (G_BATCH_SIZE,))
+
+        # Convert the full batch slice in one go, then reshape to reduce overhead.
+        ix_np = ix.cpu().numpy()
+        offsets = np.arange(G_BLOCK_SIZE + 1)
+        # Index memmap directly to avoid materializing the full dataset in RAM.
+        batch = data[ix_np[:, None] + offsets]
+        x = torch.from_numpy(batch[:, :-1]).long()
+        y = torch.from_numpy(batch[:, 1:]).long()
+        return x.to(G_DEVICE), y.to(G_DEVICE)
+
+    def _compute_loss(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         logits = self(x)
         B, T, C = logits.shape
         logits = logits.view(B * T, C)
         targets = y.view(B * T)
         return F.cross_entropy(logits, targets)
 
+    def _setup_training(self):
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=G_LR,
+            weight_decay=G_WEIGHT_DECAY,
+        ) #weighted decay for better generalization and AdamW optimizer for better convergence
+
+        # 1. Define the Warmup Scheduler (Linear increase from a 10% of G_LR to G_LR)
+        scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=0.1,end_factor=1.0,
+            total_iters=G_WARMPUP_ITERS)
+
+        # 2. Define the Main Scheduler (Cosine decay from G_LR to eta_min)
+        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=(G_MAX_ITERS - G_WARMPUP_ITERS),
+            eta_min=1e-5)
+
+        # 3. Combine them using SequentialLR - milestones=[500] means switch to the second scheduler at step 500
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer,
+            schedulers=[scheduler_warmup, scheduler_cosine],
+            milestones=[G_WARMPUP_ITERS]
+        )
+
+        return optimizer, scheduler
+
     @torch.no_grad()
-    def evaluate_loss(self) -> torch.Tensor:
+    def _evaluate_loss(self) -> torch.Tensor:
         was_training = self.training
         self.eval()
-        val_x, val_y = get_batch(self.state, split="val")
-        val_loss = self.compute_loss(val_x, val_y)
+        val_x, val_y = self._get_batch(split="val")
+        val_loss = self._compute_loss(val_x, val_y)
         if was_training: self.train()
         return val_loss
 
+    def train_loop(self) -> None:
+        optimizer, scheduler = self._setup_training()
+
+        print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
+
+        start_step = _maybe_load_checkpoint(self, optimizer)
+
+        steps = []
+        train_losses = []
+        val_losses = []
+
+        for step in range(start_step, G_MAX_ITERS):
+            optimizer.zero_grad(set_to_none=True) # More efficient than zero_grad() as it avoids unnecessary memory operations when gradients are not needed.
+
+            x, y = self._get_batch(split="train")
+            loss = self._compute_loss(x, y)
+            loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
+            optimizer.step()
+            scheduler.step() # STEP THE SCHEDULER: Update the learning rate every iteration
+
+            if (step + 1) % 100 == 0 or step == 0:
+                val_loss = self._evaluate_loss()
+                steps.append(step + 1)
+                train_losses.append(loss.item())
+                val_losses.append(val_loss.item())
+                print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
+
+            _maybe_save_checkpoint(model=self, optimizer=optimizer,
+                vocab_size=self.state.vocab_size, step=step)
+
+        _plot_losses(steps, train_losses, val_losses)
+
     # Text Generation Function
-    def generateText(self, start_text, max_tokens=50):
+    def generate_text(self, start_text, max_tokens=50):
         self.eval()
 
         tokens = self.state.tokenizer.encode(start_text)
@@ -188,10 +245,10 @@ class TinyGPT(nn.Module):
         text = self.state.tokenizer.decode(idx[0].tolist())
         return text
 
-def maybe_load_checkpoint(
+def _maybe_load_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    resume_path: str | None,
+    resume_path: str | None = CHECKPOINT_FILE,
 ) -> int:
     if not resume_path or LOAD_CHECKPOINT == False:
         return 0
@@ -203,32 +260,27 @@ def maybe_load_checkpoint(
     print(f"Resumed from {resume_path} at step {start_step}")
     return start_step
 
-
-def maybe_save_checkpoint(
+def _maybe_save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     step: int,
-    resume_path: str | None,
+    resume_path: str | None = CHECKPOINT_FILE,
     vocab_size: int,
 ) -> None:
     if resume_path is None or (step + 1) % 500 != 0:
         return
-    checkpoint_dir = os.path.dirname(resume_path) or "checkpoints"
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    ckpt_path = os.path.join(checkpoint_dir, f"tinygpt_latest.pt")
     torch.save(
         {
-            "step": step + 1,
+            "step": step,
             "model_state": model.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "vocab_size": vocab_size,
         },
-        ckpt_path,
+        resume_path,
     )
-    print(f"Saved checkpoint: {ckpt_path}")
+    print(f"Saved checkpoint: {resume_path}")
 
-
-def plot_losses(steps, train_losses, val_losses):
+def _plot_losses(steps, train_losses, val_losses):
     if not steps:
         return
 
@@ -245,82 +297,7 @@ def plot_losses(steps, train_losses, val_losses):
     plt.show()
     plt.close()
 
-def initialize_and_train(state: State,
-                         resume_path: str | None = None) -> nn.Module:
-    """Create, train, and return a `TinyGPT` model.
-
-    Args:
-        state: training state (tokenizer, data, vocab_size).
-        resume_path: path to a checkpoint file to resume from.
-
-    Returns:
-        Trained `TinyGPT` instance (on `device`).
-    """
-
-    # Model Initialization
-    model = TinyGPT(state).to(G_DEVICE)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=G_LR, weight_decay=G_WEIGHT_DECAY) #weighted decay for better generalization and AdamW optimizer for better convergence
-
-    # 1. Define the Warmup Scheduler (Linear increase from a 10% of G_LR to G_LR)
-    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1,end_factor=1.0,
-        total_iters=G_WARMPUP_ITERS)
-
-    # 2. Define the Main Scheduler (Cosine decay from G_LR to eta_min)
-    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=(G_MAX_ITERS - G_WARMPUP_ITERS), 
-        eta_min=1e-5)
-
-    # 3. Combine them using SequentialLR - milestones=[500] means switch to the second scheduler at step 500
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, 
-        schedulers=[scheduler_warmup, scheduler_cosine], 
-        milestones=[G_WARMPUP_ITERS]
-    )
-
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
-
-    start_step = maybe_load_checkpoint(model, optimizer, resume_path)
-
-    steps = []
-    train_losses = []
-    val_losses = []
-
-    for step in range(start_step, G_MAX_ITERS):
-        optimizer.zero_grad(set_to_none=True) # More efficient than zero_grad() as it avoids unnecessary memory operations when gradients are not needed.
-
-        x, y = get_batch(state, split="train")
-        loss = model.compute_loss(x, y)
-        loss.backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
-        optimizer.step()
-        scheduler.step() # STEP THE SCHEDULER: Update the learning rate every iteration
-
-        if (step + 1) % 100 == 0 or step == 0:
-            val_loss = model.evaluate_loss()
-            steps.append(step + 1)
-            train_losses.append(loss.item())
-            val_losses.append(val_loss.item())
-            print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
-
-        maybe_save_checkpoint(
-            model=model, optimizer=optimizer,
-            vocab_size=state.vocab_size,
-            step=step, resume_path=resume_path,
-        )
-
-    plot_losses(steps, train_losses, val_losses)
-
-    return model
-
 def main():
-    #basic argument parsing for checkpoint resume/save
-    p = argparse.ArgumentParser(description="Train TinyGPT")
-    p.add_argument("--checkpoint", metavar="PATH", help="Path to checkpoint to resume from (also enables saving)")
-    checkpoint_path = p.parse_args().checkpoint
-    file_path = BINARY_DATASET_FILENAME
-
     # if dataset.bin does not exist, error out.
     if not os.path.exists(BINARY_DATASET_FILENAME):
         from huggingface_hub import hf_hub_download
@@ -331,17 +308,15 @@ def main():
         print(f"Downloading {filename} from Hugging Face...")
         file_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
         shutil.copyfile(file_path, BINARY_DATASET_FILENAME)
-        file_path = BINARY_DATASET_FILENAME
+    file_path = BINARY_DATASET_FILENAME
 
     #build the state and train the model
     state = build_state(dataset_path=file_path)
-    model = initialize_and_train(
-        state,
-        resume_path=checkpoint_path if checkpoint_path else None,
-    )
+    model = TinyGPT(state).to(G_DEVICE)
+    model.train_loop()
 
     #Lets generate some text from the trained model
-    print(model.generateText(start_text="USA is a country of ", max_tokens=100))
+    print(model.generate_text(start_text="USA is a country of ", max_tokens=100))
 
 if __name__ == "__main__":
     main()
