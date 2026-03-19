@@ -7,3 +7,5 @@ tokens.npy
 dataset.bin
 
 test.py
+tinygpt_latest.pt
+loss_curve.png

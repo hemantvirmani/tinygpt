@@ -1,4 +1,6 @@
 # !pip install torch tiktoken requests huggingface_hub matplotlib
+# BINARY_DATASET_FILENAME = "/kaggle/input/datasets/hemantvirmani/gpt-training-dataset/dataset.bin"
+# CHECKPOINT_FILE = ""/kaggle/working/tinygpt_latest.pt"
 
 from sched import scheduler
 import torch
@@ -18,7 +20,7 @@ G_BATCH_SIZE = 32
 G_BLOCK_SIZE = 256
 G_N_EMBD = 512
 G_MAX_ITERS = 10000
-G_LR = 1e-4
+G_LR = 3e-4
 G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
@@ -39,8 +41,8 @@ if torch.cuda.is_available():
 @dataclass
 class State:
     tokenizer: Any
-    train_data: torch.Tensor
-    val_data: torch.Tensor
+    train_data: np.ndarray
+    val_data: np.ndarray
     vocab_size: int
 
 def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
@@ -264,8 +266,8 @@ def _maybe_save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     step: int,
-    resume_path: str | None = CHECKPOINT_FILE,
     vocab_size: int,
+    resume_path: str | None = CHECKPOINT_FILE,
 ) -> None:
     if resume_path is None or (step + 1) % 500 != 0:
         return
