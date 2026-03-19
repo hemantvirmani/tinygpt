@@ -6,3 +6,4 @@ dataset.txt
 tokens.npy
 dataset.bin
 
+test.py
