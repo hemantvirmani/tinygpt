@@ -24,6 +24,7 @@ G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 500
+G_DROPOUT_PROB = 0.0
 
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
@@ -85,6 +86,7 @@ class SelfAttention(nn.Module):
             "mask", 
             torch.tril(torch.ones(G_BLOCK_SIZE, G_BLOCK_SIZE))
         )
+        self.dropout = nn.Dropout(G_DROPOUT_PROB)
 
     def forward(self, x): # Attention = softmax(similarity(q, k)) @ v
         B, T, C = x.shape
@@ -96,6 +98,7 @@ class SelfAttention(nn.Module):
         weights1 = q @ k.transpose(-2, -1) / (C**0.5)
         weights1 = weights1.masked_fill(self.mask[:T, :T] == 0, float('-inf')) #Mask ensures auto regressive behavior
         weights1 = F.softmax(weights1, dim=-1)
+        weights1 = self.dropout(weights1)
 
         v = self.value(x) # `v` (value): information returned.
         out = weights1 @ v
@@ -111,7 +114,8 @@ class Block(nn.Module):
         self.ffwd = nn.Sequential(
             nn.Linear(n_embd, 4*n_embd),
             nn.GELU(),
-            nn.Linear(4*n_embd, n_embd)
+            nn.Linear(4*n_embd, n_embd),
+            nn.Dropout(G_DROPOUT_PROB),
         )
 
         self.ln1 = nn.LayerNorm(n_embd)

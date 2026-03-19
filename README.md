@@ -34,12 +34,9 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 ## 🧩 TODO (Living List, not in order of implementation)
 
-- Logging improvements
 - Add dropout layer
 - multi head attention: different heads learn different patterns
 - Temperature sampling, Top-k / Top-p sampling
-- Improve tokenization and larger dataset - Use WikiText?
-- Experiment with optimizer and Learning Rates
 - Fine Tuning
 - RLHF
 
@@ -71,6 +68,13 @@ Run → Understand → Control → Scale → Customize
 Inspired by Andrej Karpathy and GPT architectures. Used ChatGPT for the code
 
 ## 📝 My Notes
+3/18: tinygpt.py - Loss: train 5.1001 | val 5.1144
+    G_BATCH_SIZE = 32
+    G_BLOCK_SIZE = 256
+    G_N_EMBD = 512
+    G_MAX_ITERS = 10000
+    G_LR = 1e-4
+
 3/17: Femtogpt.py - Training Loss = 3.829 and Validation Loss: 4.6121
     G_BATCH_SIZE = 64
     G_BLOCK_SIZE = 64
