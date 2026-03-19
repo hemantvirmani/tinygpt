@@ -25,10 +25,10 @@ G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 500
 G_DROPOUT_PROB = 0.0
-
+#------
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 G_SEED = 1947
-
+G_SPLIT_RATIO = 0.8
 #Static Constants
 BINARY_DATASET_FILENAME = "dataset.bin"
 LOAD_CHECKPOINT = False
@@ -45,7 +45,7 @@ class State:
     val_data: torch.Tensor
     vocab_size: int
 
-def build_state(split_ratio: float = 0.8, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
+def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
     # Tokenizer and related objects
     tokenizer = tiktoken.get_encoding("gpt2")
     vocab_size = tokenizer.n_vocab
@@ -129,16 +129,17 @@ class Block(nn.Module):
 
 #Lets Create the GPT model
 class TinyGPT(nn.Module):
-    def __init__(self, vocab_size: int):
+    def __init__(self, state: State):
         super().__init__()
 
-        self.token_embedding_table = nn.Embedding(vocab_size, G_N_EMBD)
+        self.state = state
+        self.token_embedding_table = nn.Embedding(state.vocab_size, G_N_EMBD)
         self.position_embedding_table = nn.Embedding(G_BLOCK_SIZE, G_N_EMBD)
 
         self.blocks = nn.Sequential(*[Block(G_N_EMBD) for _ in range(G_N_LAYERS)]) #Stacking multiple blocks for deeper architecture
 
         self.ln_f = nn.LayerNorm(G_N_EMBD)
-        self.head = nn.Linear(G_N_EMBD, vocab_size)
+        self.head = nn.Linear(G_N_EMBD, state.vocab_size)
 
     def forward(self, idx):
         B, T = idx.shape
@@ -152,14 +153,40 @@ class TinyGPT(nn.Module):
         logits = self.head(x) #final projection to logits for each token in the vocabulary
         return logits
 
+    def compute_loss(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        logits = self(x)
+        B, T, C = logits.shape
+        logits = logits.view(B * T, C)
+        targets = y.view(B * T)
+        return F.cross_entropy(logits, targets)
 
-def compute_loss(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-    logits = model(x)
-    B, T, C = logits.shape
-    logits = logits.view(B * T, C)
-    targets = y.view(B * T)
-    return F.cross_entropy(logits, targets)
+    @torch.no_grad()
+    def evaluate_loss(self) -> torch.Tensor:
+        was_training = self.training
+        self.eval()
+        val_x, val_y = get_batch(self.state, split="val")
+        val_loss = self.compute_loss(val_x, val_y)
+        if was_training: self.train()
+        return val_loss
 
+    # Text Generation Function
+    def generateText(self, start_text, max_tokens=50):
+        self.eval()
+
+        tokens = self.state.tokenizer.encode(start_text)
+        idx = torch.tensor(tokens).unsqueeze(0).to(G_DEVICE)
+
+        for _ in range(max_tokens):
+            idx_cond = idx[:, -G_BLOCK_SIZE:]
+            logits = self(idx_cond)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+
+        text = self.state.tokenizer.decode(idx[0].tolist())
+        return text
 
 def maybe_load_checkpoint(
     model: nn.Module,
@@ -201,16 +228,6 @@ def maybe_save_checkpoint(
     print(f"Saved checkpoint: {ckpt_path}")
 
 
-def evaluate_loss(model: nn.Module, state: State) -> torch.Tensor:
-    was_training = model.training
-    model.eval()
-    with torch.no_grad():
-        val_x, val_y = get_batch(state, split="val")
-        val_loss = compute_loss(model, val_x, val_y)
-    if was_training:
-        model.train()
-    return val_loss
-
 def plot_losses(steps, train_losses, val_losses):
     if not steps:
         return
@@ -241,7 +258,7 @@ def initialize_and_train(state: State,
     """
 
     # Model Initialization
-    model = TinyGPT(state.vocab_size).to(G_DEVICE)
+    model = TinyGPT(state).to(G_DEVICE)
     optimizer = torch.optim.AdamW(model.parameters(), lr=G_LR, weight_decay=G_WEIGHT_DECAY) #weighted decay for better generalization and AdamW optimizer for better convergence
 
     # 1. Define the Warmup Scheduler (Linear increase from a 10% of G_LR to G_LR)
@@ -261,9 +278,7 @@ def initialize_and_train(state: State,
         milestones=[G_WARMPUP_ITERS]
     )
 
-    total_params = sum(p.numel() for p in model.parameters())
-    total_m = total_params / 1_000_000
-    print(f"Total parameters: {total_m:.2f}M")
+    print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
 
     start_step = maybe_load_checkpoint(model, optimizer, resume_path)
 
@@ -275,15 +290,15 @@ def initialize_and_train(state: State,
         optimizer.zero_grad(set_to_none=True) # More efficient than zero_grad() as it avoids unnecessary memory operations when gradients are not needed.
 
         x, y = get_batch(state, split="train")
-        loss = compute_loss(model, x, y)
+        loss = model.compute_loss(x, y)
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
         optimizer.step()
         scheduler.step() # STEP THE SCHEDULER: Update the learning rate every iteration
 
-        if (step + 1) % 100 == 0:
-            val_loss = evaluate_loss(model, state)
+        if (step + 1) % 100 == 0 or step == 0:
+            val_loss = model.evaluate_loss()
             steps.append(step + 1)
             train_losses.append(loss.item())
             val_losses.append(val_loss.item())
@@ -298,27 +313,6 @@ def initialize_and_train(state: State,
     plot_losses(steps, train_losses, val_losses)
 
     return model
-
-
-# Text Generation Function
-def generateText(model, state: State, start_text, max_tokens=50):
-
-    model.eval()
-
-    tokens = state.tokenizer.encode(start_text)
-    idx = torch.tensor(tokens).unsqueeze(0).to(G_DEVICE)
-
-    for _ in range(max_tokens):
-        idx_cond = idx[:, -G_BLOCK_SIZE:]
-        logits = model(idx_cond)
-        logits = logits[:, -1, :]
-        probs = F.softmax(logits, dim=-1)
-
-        idx_next = torch.multinomial(probs, num_samples=1)
-        idx = torch.cat((idx, idx_next), dim=1)
-
-    text = state.tokenizer.decode(idx[0].tolist())
-    return text
 
 def main():
     #basic argument parsing for checkpoint resume/save
@@ -347,16 +341,7 @@ def main():
     )
 
     #Lets generate some text from the trained model
-    sample = generateText(
-        model, state,
-        start_text="USA is a country of ",
-        max_tokens=100,
-    )
-
-    #Lets see what we got!
-    print("------ FINAL TEXT ------")
-    print(sample)
-    print("------------")
+    print(model.generateText(start_text="USA is a country of ", max_tokens=100))
 
 if __name__ == "__main__":
     main()
