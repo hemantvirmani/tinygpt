@@ -7,15 +7,15 @@ from typing import Any
 
 
 # hyperparameters
-G_BATCH_SIZE = 16 # how many independent sequences will we process in parallel?
-G_BLOCK_SIZE = 32 # what is the maximum context length for predictions?
-G_N_EMBD = 64
-G_MAX_ITERS = 5000
-G_LR = 1e-3 #for simple models we can afford to go a bit higher. for complex models, it is usually best to start off around 1e-4
+G_BATCH_SIZE = 64 # how many independent sequences will we process in parallel?
+G_BLOCK_SIZE = 256 # what is the maximum context length for predictions?
+G_N_EMBD = 384
+G_MAX_ITERS = 2000
+G_LR = 3e-4 #for simple models we can afford to go a bit higher. for complex models, it is usually best to start off around 1e-4
 G_EVAL_ITERS = 200
-G_N_HEAD = 4
-G_N_LAYER = 4
-G_DROPOUT = 0.0
+G_N_HEAD = 6
+G_N_LAYER = 6
+G_DROPOUT = 0.2
 # ------------
 G_DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 G_SEED = 1337
