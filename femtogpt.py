@@ -169,14 +169,15 @@ class Block(nn.Module):
 # super simple bigram model
 class FemtoGPT(nn.Module):
 
-    def __init__(self, vocab_size: int):
+    def __init__(self, state: State):
         super().__init__()
+        self.state = state
         # each token directly reads off the logits for the next token from a lookup table
-        self.token_embedding_table = nn.Embedding(vocab_size, G_N_EMBD)
+        self.token_embedding_table = nn.Embedding(state.vocab_size, G_N_EMBD)
         self.position_embedding_table = nn.Embedding(G_BLOCK_SIZE, G_N_EMBD)
         self.blocks = nn.Sequential(*[Block(G_N_EMBD, n_head=G_N_HEAD) for _ in range(G_N_LAYER)])
         self.ln_f = nn.LayerNorm(G_N_EMBD) # final layer norm
-        self.lm_head = nn.Linear(G_N_EMBD, vocab_size)
+        self.lm_head = nn.Linear(G_N_EMBD, state.vocab_size)
 
     def forward(self, idx, targets=None):
         B, T = idx.shape
@@ -218,7 +219,7 @@ class FemtoGPT(nn.Module):
 
 def initialize_and_train(state: State) -> nn.Module:
 
-    model = FemtoGPT(state.vocab_size).to(G_DEVICE)
+    model = FemtoGPT(state).to(G_DEVICE)
     # print the number of parameters in the model
     print(sum(p.numel() for p in model.parameters())/1e6, 'M parameters')
 
@@ -242,7 +243,6 @@ def initialize_and_train(state: State) -> nn.Module:
         optimizer.step()
 
     return model
-
 
 def main():
     state = build_state()
