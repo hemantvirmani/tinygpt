@@ -65,9 +65,9 @@ class SelfAttention(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
 
-        self.key = nn.Linear(G_N_EMBD, n_embd)
-        self.query = nn.Linear(G_N_EMBD, n_embd)
-        self.value = nn.Linear(G_N_EMBD, n_embd)
+        self.key = nn.Linear(G_N_EMBD, n_embd, bias=False)
+        self.query = nn.Linear(G_N_EMBD, n_embd, bias=False)
+        self.value = nn.Linear(G_N_EMBD, n_embd, bias=False)
 
         self.register_buffer(
             "mask", 
@@ -96,7 +96,7 @@ class MultiHeadAttention(nn.Module):
     def __init__(self, num_heads, head_size):
         super().__init__()
         self.heads = nn.ModuleList([SelfAttention(head_size) for _ in range(num_heads)])
-        self.proj = nn.Linear(G_N_EMBD, G_N_EMBD)
+        self.proj = nn.Linear(G_N_EMBD, G_N_EMBD, bias=False)
         self.dropout = nn.Dropout(G_DROPOUT_PROB)
 
     def forward(self, x):
@@ -150,9 +150,9 @@ class Block(nn.Module):
         self.attention = CausalSelfAttention(n_embd)
         self.ln2 = nn.LayerNorm(n_embd)
         self.feed_forward = nn.Sequential(
-            nn.Linear(n_embd, 4*n_embd),
+            nn.Linear(n_embd, 4*n_embd, bias=False),
             nn.GELU(),
-            nn.Linear(4*n_embd, n_embd),
+            nn.Linear(4*n_embd, n_embd, bias=False),
             nn.Dropout(G_DROPOUT_PROB),
         )
 
