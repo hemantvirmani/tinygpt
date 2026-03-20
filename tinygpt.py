@@ -16,17 +16,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 #Hyperparameters
-G_BATCH_SIZE = 32
-G_BLOCK_SIZE = 256
-G_N_EMBD = 512
-G_MAX_ITERS = 10000
+G_BATCH_SIZE = 4
+G_BLOCK_SIZE = 1024
+G_N_EMBD = 768
+G_MAX_ITERS = 40000
 G_LR = 3e-4
 G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
-G_WARMPUP_ITERS = 500
+G_WARMPUP_ITERS = 4000 # 10% of G_MAX_ITERS
 G_DROPOUT_PROB = 0.0
-G_N_HEAD = 8
+G_N_HEAD = 12
+G_EFFECTIVE_BATCH_SIZE = 32
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #------Static Constants------#
 G_SEED = 1947
@@ -109,7 +110,7 @@ class Block(nn.Module):
         super().__init__()
  
         # Each head gets an equal portion of the embedding dimension
-        self.mha = MultiHeadAttention(G_N_HEAD, n_embd // G_N_HEAD) 
+        self.attention = MultiHeadAttention(G_N_HEAD, n_embd // G_N_HEAD) 
         self.ffwd = nn.Sequential(
             nn.Linear(n_embd, 4*n_embd),
             nn.GELU(),
@@ -120,7 +121,7 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
-        x = x + self.mha(self.ln1(x))
+        x = x + self.attention(self.ln1(x))
         x = x + self.ffwd(self.ln2(x))
 
         return x
@@ -139,6 +140,8 @@ class TinyGPT(nn.Module):
         self.ln_f = nn.LayerNorm(G_N_EMBD)
         self.head = nn.Linear(G_N_EMBD, state.vocab_size)
 
+        self.apply(self._init_weights)
+
     def forward(self, idx):
         B, T = idx.shape
 
@@ -150,6 +153,14 @@ class TinyGPT(nn.Module):
         x = self.ln_f(x) #normalizes the hidden states
         logits = self.head(x) #final projection to logits for each token in the vocabulary
         return logits
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     #Load the batch from the dataset
     def _get_batch(self, split: str = "train"):
@@ -199,18 +210,28 @@ class TinyGPT(nn.Module):
         return optimizer, scheduler
 
     @torch.no_grad()
-    def _evaluate_loss(self) -> torch.Tensor:
+    def _evaluate_loss(self, eval_iters=10) -> torch.Tensor:
+        """Averages loss over multiple batches for a more stable validation metric."""
         was_training = self.training
         self.eval()
-        val_x, val_y = self._get_batch(split="val")
-        val_loss = self._compute_loss(val_x, val_y)
+        losses = torch.zeros(eval_iters, device=G_DEVICE)
+        for k in range(eval_iters):
+            val_x, val_y = self._get_batch(split="val")
+            losses[k] = self._compute_loss(val_x, val_y)
+        val_loss = losses.mean()
         if was_training: self.train()
         return val_loss
 
     def train_loop(self) -> None:
         optimizer, scheduler = self._setup_training()
 
+        # Target an effective batch size of 32 to reduce "waviness"
+        # Since G_BATCH_SIZE is 4, we accumulate for 8 steps (4 * 8 = 32)
+        assert G_EFFECTIVE_BATCH_SIZE % G_BATCH_SIZE == 0, "G_EFFECTIVE_BATCH_SIZE must be divisible by G_BATCH_SIZE"
+        accumulation_steps = G_EFFECTIVE_BATCH_SIZE // G_BATCH_SIZE 
+
         print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
+        print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
         start_step = _maybe_load_checkpoint(self, optimizer)
 
@@ -219,22 +240,32 @@ class TinyGPT(nn.Module):
         val_losses = []
 
         for step in range(start_step, G_MAX_ITERS):
-            optimizer.zero_grad(set_to_none=True) # More efficient than zero_grad() as it avoids unnecessary memory operations when gradients are not needed.
+            # 1. Accumulate gradients over multiple micro-batches
+            optimizer.zero_grad(set_to_none=True)
+            micro_step_loss = 0.0
+            
+            for _ in range(accumulation_steps):
+                x, y = self._get_batch(split="train")
+                loss = self._compute_loss(x, y)
+                # Scale loss by accumulation steps so gradients are averaged correctly
+                scaled_loss = loss / accumulation_steps
+                scaled_loss.backward()
+                micro_step_loss += loss.item()
 
-            x, y = self._get_batch(split="train")
-            loss = self._compute_loss(x, y)
-            loss.backward()
+            avg_train_loss = micro_step_loss / accumulation_steps
 
-            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=G_GRAD_CLIP) #GRADIENT CLIPPING: to prevent loss spikes
+            # 2. Clip and update weights
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=G_GRAD_CLIP)
             optimizer.step()
-            scheduler.step() # STEP THE SCHEDULER: Update the learning rate every iteration
+            scheduler.step()
 
-            if (step + 1) % 100 == 0 or step == 0:
-                val_loss = self._evaluate_loss()
+            # 3. Logging and Checkpointing
+            if (step + 1) % 200 == 0 or step == 0:
+                val_loss = self._evaluate_loss(eval_iters=10)
                 steps.append(step + 1)
-                train_losses.append(loss.item())
+                train_losses.append(avg_train_loss)
                 val_losses.append(val_loss.item())
-                print(f"step {step+1}: train {loss.item():.4f} | val {val_loss.item():.4f}")
+                print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}")
 
             _maybe_save_checkpoint(model=self, optimizer=optimizer,
                 vocab_size=self.state.vocab_size, step=step)
@@ -282,7 +313,7 @@ def _maybe_save_checkpoint(
     vocab_size: int,
     resume_path: str | None = CHECKPOINT_FILE,
 ) -> None:
-    if resume_path is None or (step + 1) % 500 != 0:
+    if resume_path is None or (step + 1) % 1000 != 0:
         return
     torch.save(
         {
@@ -331,7 +362,7 @@ def main():
     model.train_loop()
 
     #Lets generate some text from the trained model
-    print(model.generate_text(start_text="USA is a country of ", max_tokens=100))
+    print(model.generate_text(start_text="USA is a country of ", max_tokens=1000))
 
 if __name__ == "__main__":
     main()
