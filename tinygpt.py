@@ -27,7 +27,7 @@ G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 4000 # 10% of G_MAX_ITERS
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
-G_EFFECTIVE_BATCH_SIZE = 32
+G_EFFECTIVE_BATCH_SIZE = 8
 G_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #------Static Constants------#
 G_SEED = 1947
@@ -104,25 +104,61 @@ class MultiHeadAttention(nn.Module):
         out = self.dropout(self.proj(out))
         return out
 
+class CausalSelfAttention(nn.Module):
+    def __init__(self, n_embd):
+        super().__init__()
+        assert n_embd % G_N_HEAD == 0
+        # Key, Query, Value projections for all heads in one go
+        self.c_attn = nn.Linear(n_embd, 3 * n_embd)
+        # Output projection
+        self.c_proj = nn.Linear(n_embd, n_embd)
+        # Regularization
+        self.attn_dropout = nn.Dropout(G_DROPOUT_PROB)
+        self.resid_dropout = nn.Dropout(G_DROPOUT_PROB)
+        
+        self.register_buffer("mask", torch.tril(torch.ones(G_BLOCK_SIZE, G_BLOCK_SIZE))
+                                        .view(1, 1, G_BLOCK_SIZE, G_BLOCK_SIZE))
+
+    def forward(self, x):
+        B, T, C = x.size()
+        # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v  = self.c_attn(x).split(G_N_EMBD, dim=2)
+        k = k.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
+        q = q.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
+        v = v.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
+
+        # Causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
+        att = (q @ k.transpose(-2, -1)) * (1.0 / (k.size(-1)**0.5))
+        att = att.masked_fill(self.mask[:,:,:T,:T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)
+        att = self.attn_dropout(att)
+        y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        y = y.transpose(1, 2).contiguous().view(B, T, C) # Re-assemble all head outputs side by side
+
+        # Output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+    
 # Transformer block: self-attention plus feed-forward network
 class Block(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
  
         # Each head gets an equal portion of the embedding dimension
-        self.attention = MultiHeadAttention(G_N_HEAD, n_embd // G_N_HEAD) 
-        self.ffwd = nn.Sequential(
+        self.ln1 = nn.LayerNorm(n_embd)
+        #self.attention = MultiHeadAttention(G_N_HEAD, n_embd // G_N_HEAD)
+        self.attention = CausalSelfAttention(n_embd)
+        self.ln2 = nn.LayerNorm(n_embd)
+        self.feed_forward = nn.Sequential(
             nn.Linear(n_embd, 4*n_embd),
             nn.GELU(),
             nn.Linear(4*n_embd, n_embd),
             nn.Dropout(G_DROPOUT_PROB),
         )
-        self.ln1 = nn.LayerNorm(n_embd)
-        self.ln2 = nn.LayerNorm(n_embd)
 
     def forward(self, x):
         x = x + self.attention(self.ln1(x))
-        x = x + self.ffwd(self.ln2(x))
+        x = x + self.feed_forward(self.ln2(x))
 
         return x
 
@@ -210,7 +246,7 @@ class TinyGPT(nn.Module):
         return optimizer, scheduler
 
     @torch.no_grad()
-    def _evaluate_loss(self, eval_iters=10) -> torch.Tensor:
+    def _evaluate_loss(self, eval_iters=5) -> torch.Tensor:
         """Averages loss over multiple batches for a more stable validation metric."""
         was_training = self.training
         self.eval()
@@ -260,7 +296,7 @@ class TinyGPT(nn.Module):
             scheduler.step()
 
             # 3. Logging and Checkpointing
-            if (step + 1) % 200 == 0 or step == 0:
+            if (step + 1) % 100 == 0 or step == 0:
                 val_loss = self._evaluate_loss(eval_iters=10)
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
