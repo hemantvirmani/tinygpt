@@ -20,6 +20,24 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 - Keep the code simple enough to explain line-by-line.
 - Iterate in small, understandable steps.
 
+## Performance Optimizations
+
+### Hardware Performance Optimizations :
+- TensorFloat-32 (TF32) precision: set `torch.set_float32_matmul_precision('high')` for 19-bit internal matmul precision. (1000ms - 333ms per step) [DONE]
+- bfloat16 mixed precision: use `torch.autocast` for faster, lower-precision training without float16 overflow issues. (drops to 300ms per step) [WIP]
+- Kernel fusion via `torch.compile`: fuses ops into a single CUDA kernel to reduce overhead.  (drops to 130ms per step) [DONE]
+- FlashAttention: use `torch.nn.functional.scaled_dot_product_attention` to avoid materializing the NxN attention matrix. (drops to 96ms per step) [WIP]
+- "Nice" numbers (padding): increase vocab size from 50,257 to 50,304 (multiple of 128) for better GPU tile alignment. (drops to 93ms per step)
+
+## Algorithmic Optimizations:
+- AdamW optimizer with GPT-3 hyperparameters: beta1=0.9, beta2=0.95, epsilon=1e-8. [DONE - partially]
+- Weight decay 0.1 on 2D parameters only (exclude biases and LayerNorm scales). [DONE]
+- Cosine LR schedule: linear warmup to max LR (6e-4 for 124M), then decay to 10% of max. [DONE]
+- Global grad clip 1.0 to prevent loss spikes. [DONE]
+- Fused AdamW (`fused=True`) for faster updates.
+- Gradient accumulation to reach large effective batch sizes without OOM. [DONE]
+
+
 ## 🧩 TODO (Living List, not in order of implementation)
 
 - multi head attention: different heads learn different patterns
@@ -56,11 +74,13 @@ Val Loss: \~1.5 -- 2.5
    * G_MAX_ITERS = 10000, G_LR = 3e-4
 
 3/19: Femtogpt.py (Significant Scale up) - Training Loss = 1.3349 and Validation Loss: 1.6529
+   * 10.8M parameters
    * G_BATCH_SIZE = 64, G_BLOCK_SIZE = 256, G_N_EMBD = 384
    * G_MAX_ITERS = 2000, G_LR = 3e-4, G_N_HEAD = 6, G_N_LAYER = 6
    * G_DROPOUT = 0.2
 
 3/18: Femtogpt.py - Training Loss = 1.6655 and Validation Loss: 1.8924
+   * 0.2M parameters
    * G_BATCH_SIZE = 16, G_BLOCK_SIZE = 32, G_N_EMBD = 64,
    * G_MAX_ITERS = 5000, G_LR = 1e-3, G_N_HEAD = 4,
    * G_N_LAYER = 4, G_DROPOUT = 0.0
