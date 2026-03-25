@@ -5,7 +5,6 @@
 # CHECKPOINT_FILE = "/workspace/chkpt/tinygpt_latest.pt"
 
 import inspect
-from sched import scheduler
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -35,14 +34,14 @@ G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
 G_EFFECTIVE_BATCH_SIZE = 8
 USE_BF16 = True
-USE_SDP_ATTENTION = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu")
 #------Static Constants------#
 G_SEED = 1947
 G_SPLIT_RATIO = 0.8
-BINARY_DATASET_FILENAME = "dataset.bin"
+USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = False
+BINARY_DATASET_FILENAME = "dataset.bin"
 CHECKPOINT_FILE = "tinygpt_latest.pt"
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
@@ -116,6 +115,7 @@ class MultiHeadAttention(nn.Module):
 class CausalSelfAttention(nn.Module):
     def __init__(self, n_embd):
         super().__init__()
+        self.n_embd = n_embd
         assert n_embd % G_N_HEAD == 0
         # Key, Query, Value projections for all heads in one go
         self.c_attn = nn.Linear(n_embd, 3 * n_embd)
@@ -132,7 +132,7 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size()
         # Calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v  = self.c_attn(x).split(G_N_EMBD, dim=2)
+        q, k, v  = self.c_attn(x).split(self.n_embd, dim=2)
         k = k.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
         q = q.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, G_N_HEAD, C // G_N_HEAD).transpose(1, 2) # (B, nh, T, hs)
@@ -359,7 +359,7 @@ class TinyGPT(nn.Module):
                 val_losses.append(val_loss.item())
                 print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}")
 
-            _maybe_save_checkpoint(model=self, optimizer=optimizer,
+            _maybe_save_checkpoint(model=self, optimizer=optimizer, scheduler=scheduler,
                 vocab_size=self.state.vocab_size, step=step)
 
         _plot_losses(steps, train_losses, val_losses)
@@ -390,11 +390,15 @@ def _maybe_load_checkpoint(
 ) -> int:
     if not resume_path or LOAD_CHECKPOINT == False:
         return 0
-    
+
+    if not os.path.exists(resume_path):
+        print(f"Checkpoint not found at {resume_path}. Starting fresh.")
+        return 0
+
     ckpt = torch.load(resume_path, map_location=G_DEVICE)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
-    start_step = int(ckpt.get("step", 0))
+    start_step = int(ckpt.get("step", 0)) + 1
     print(f"Resumed from {resume_path} at step {start_step}")
     return start_step
 
@@ -407,15 +411,13 @@ def _maybe_save_checkpoint(
 ) -> None:
     if resume_path is None or (step + 1) % 1000 != 0:
         return
-    torch.save(
-        {
-            "step": step,
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "vocab_size": vocab_size,
-        },
-        resume_path,
-    )
+    payload = {
+        "step": step,
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "vocab_size": vocab_size,
+    }
+    torch.save(payload, resume_path)
     print(f"Saved checkpoint: {resume_path}")
 
 def _plot_losses(steps, train_losses, val_losses):
