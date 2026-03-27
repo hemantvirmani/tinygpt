@@ -282,7 +282,7 @@ class TinyGPT(nn.Module):
         # 2. Define the Main Scheduler (Cosine decay from G_LR to eta_min)
         scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=(G_MAX_ITERS - G_WARMPUP_ITERS),
-            eta_min=1e-5)
+            eta_min=0.1*G_LR) # Decay to 10% of G_LR by the end of training
 
         # 3. Combine them using SequentialLR - milestones=[500] means switch to the second scheduler at step 500
         scheduler = torch.optim.lr_scheduler.SequentialLR(
@@ -437,8 +437,9 @@ def _plot_losses(steps, train_losses, val_losses):
     plt.show()
     plt.close()
 
-def main():
-    # if dataset.bin does not exist, error out.
+# Code for runing inference
+def _ensure_dataset():
+    # if dataset.bin does not exist, download it.
     if not os.path.exists(BINARY_DATASET_FILENAME):
         from huggingface_hub import hf_hub_download
         # Download the specific .bin file from your repository
@@ -448,15 +449,37 @@ def main():
         print(f"Downloading {filename} from Hugging Face...")
         file_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
         shutil.copyfile(file_path, BINARY_DATASET_FILENAME)
-    file_path = BINARY_DATASET_FILENAME
+    return BINARY_DATASET_FILENAME
 
-    #build the state and train the model
+def load_model_for_inference() -> TinyGPT:
+    """Load model weights from checkpoint and return an eval-ready model."""
+    file_path = _ensure_dataset()
+    state = build_state(dataset_path=file_path)
+    model = TinyGPT(state).to(G_DEVICE)
+    if G_DEVICE == "cuda": model = torch.compile(model)
+    optimizer, _ = model._setup_training()
+    _maybe_load_checkpoint(model, optimizer)
+    model.eval()
+    return model
+
+def main():
+    parser = argparse.ArgumentParser(description="Train TinyGPT or run inference.")
+    parser.add_argument("--infer", type=str, help="Run inference with the given prompt.")
+    args = parser.parse_args()
+
+    if args.infer:
+        model = load_model_for_inference()
+        print(model.generate_text(start_text=args.infer, max_tokens=1000))
+        return
+
+    file_path = _ensure_dataset()
+    # build the state and train the model
     state = build_state(dataset_path=file_path)
     model = TinyGPT(state).to(G_DEVICE)
     if G_DEVICE == "cuda": model = torch.compile(model)
     model.train_loop()
 
-    #Lets generate some text from the trained model
+    # Lets generate some text from the trained model
     print(model.generate_text(start_text="USA is a country of ", max_tokens=1000))
 
 if __name__ == "__main__":

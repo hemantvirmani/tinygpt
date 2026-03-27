@@ -9,3 +9,8 @@ dataset.bin
 test.py
 tinygpt_latest.pt
 loss_curve.png
+tinygpt.py
+tiny-stories-dataset/
+
+gpt2-training-artifacts/
+
