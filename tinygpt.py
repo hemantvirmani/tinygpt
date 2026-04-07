@@ -405,8 +405,9 @@ def _maybe_load_checkpoint(
 def _maybe_save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
-    step: int,
-    vocab_size: int,
+    scheduler: Any = None,
+    step: int = 0,
+    vocab_size: int = 0,
     resume_path: str | None = CHECKPOINT_FILE,
 ) -> None:
     if resume_path is None or (step + 1) % 1000 != 0:
@@ -417,6 +418,11 @@ def _maybe_save_checkpoint(
         "optimizer_state": optimizer.state_dict(),
         "vocab_size": vocab_size,
     }
+    if scheduler is not None:
+        try:
+            payload["scheduler_state"] = scheduler.state_dict()
+        except Exception:
+            payload["scheduler_state"] = None
     torch.save(payload, resume_path)
     print(f"Saved checkpoint: {resume_path}")
 
