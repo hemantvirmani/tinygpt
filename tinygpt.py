@@ -21,7 +21,7 @@ import numpy as np
 torch.set_float32_matmul_precision('high')
 
 #Hyperparameters
-G_BATCH_SIZE = 4
+G_BATCH_SIZE = 8
 G_BLOCK_SIZE = 1024
 G_N_EMBD = 768
 G_MAX_ITERS = 40000
@@ -32,7 +32,7 @@ G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 4000 # 10% of G_MAX_ITERS
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
-G_EFFECTIVE_BATCH_SIZE = 8
+G_EFFECTIVE_BATCH_SIZE = 16
 G_EVAL_ITERATIONS = 20
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
