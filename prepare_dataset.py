@@ -1,4 +1,5 @@
 # prepare_dataset.py
+# !pip install datasets tiktoken numpy
 
 import re
 from datasets import load_dataset
@@ -55,14 +56,11 @@ def load_data():
     print("Loading WikiText-103...")
     wiki = load_dataset("wikitext", "wikitext-103-raw-v1", split="train")
 
-    if OPENWEBTEXT_FRACTION:
-        print("Loading OpenWebText (sample)...")
-        owt = load_dataset(
-            "openwebtext",
-            split=f"train[:{OPENWEBTEXT_FRACTION}%]"
-        )
-    else:
-        owt = {"text": []}
+    print("Loading OpenWebText (sample)...")
+    owt = load_dataset(
+        "openwebtext",
+        split=f"train[:{OPENWEBTEXT_FRACTION}%]"
+    )
 
     print(f"Loading FineWeb-Edu sample-10BT ({FINEWEB_FRACTION}%)...")
     fineweb = load_dataset(
@@ -149,6 +147,7 @@ def tokenize_and_save(texts, bin_file=BIN_FILE):
     print("\nToken + binary files saved.")
 
 
+
 # -----------------------------
 # Main
 # -----------------------------
@@ -161,6 +160,19 @@ def main():
 
     print("\nDone.")
 
-
 if __name__ == "__main__":
     main()
+
+
+def save_to_google_drive():
+    from google.colab import drive
+    import shutil
+    drive.mount('/content/drive')
+    shutil.copy(BIN_FILE, '/content/drive/MyDrive/dataset.bin')
+    print("Saved to Google Drive.")
+
+# Runpod Instructions:
+# Get the file ID from the shareable link of dataset.bin in your Drive:
+#https://drive.google.com/file/d/THIS_PART_IS_THE_ID/view
+#pip install gdown
+#gdown "https://drive.google.com/uc?id=YOUR_FILE_ID"
