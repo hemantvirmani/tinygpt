@@ -162,17 +162,17 @@ def main():
         help="Comma-separated paths to local FineWeb-Edu parquet files (e.g. 000_00000.parquet,001_00000.parquet). Produces dataset2.bin alongside the base dataset."
     )
     args = parser.parse_args()
+    wiki_texts, owt_texts = load_data()
 
     if args.hf_files:
         parquet_paths = [p.strip() for p in args.hf_files.split(",") if p.strip()]
         fineweb_texts = load_parquet_files(parquet_paths)
 
         print("\n=== Building FineWeb-Edu dataset ===")
-        cleaned = preprocess([], [], extra_texts=fineweb_texts)
+        cleaned = preprocess(wiki_texts, [], extra_texts=fineweb_texts)
         save_text(cleaned, path="dataset2.txt")
         tokenize_and_save(cleaned, bin_file="dataset2.bin")
     else:
-        wiki_texts, owt_texts = load_data()
 
         print("\n=== Building base dataset (wiki + owt) ===")
         cleaned = preprocess(wiki_texts, owt_texts)
