@@ -1,10 +1,12 @@
 # prepare_dataset.py
 
 import re
+import argparse
 from datasets import load_dataset
 import random
 import numpy as np
 import tiktoken
+import pandas as pd
 
 
 # -----------------------------
@@ -16,7 +18,6 @@ SEED = 42
 
 TEXT_FILE = "dataset.txt"
 BIN_FILE = "dataset.bin"
-TOKENS_FILE = "tokens.npy"
 
 
 # -----------------------------
@@ -64,10 +65,21 @@ def load_data():
     return wiki["text"], owt["text"]
 
 
+def load_parquet_files(paths):
+    """Load text from local FineWeb-Edu parquet files."""
+    texts = []
+    for path in paths:
+        print(f"Loading parquet file: {path}...")
+        df = pd.read_parquet(path, columns=["text"])
+        texts.extend(df["text"].tolist())
+    print(f"Loaded {len(texts):,} samples from parquet files.")
+    return texts
+
+
 # -----------------------------
 # Preprocessing pipeline
 # -----------------------------
-def preprocess(wiki_texts, owt_texts):
+def preprocess(wiki_texts, owt_texts, extra_texts=None):
     print("Cleaning text...")
 
     all_texts = []
@@ -81,6 +93,12 @@ def preprocess(wiki_texts, owt_texts):
         ct = clean_text(t)
         if is_good(ct):
             all_texts.append(ct)
+
+    if extra_texts:
+        for t in extra_texts:
+            ct = clean_text(t)
+            if is_good(ct):
+                all_texts.append(ct)
 
     print(f"After cleaning: {len(all_texts)} samples")
 
@@ -100,20 +118,18 @@ def preprocess(wiki_texts, owt_texts):
 # -----------------------------
 # Save text
 # -----------------------------
-def save_text(texts):
-    print(f"Saving text to {TEXT_FILE}...")
-
-    with open(TEXT_FILE, "w", encoding="utf-8") as f:
+def save_text(texts, path=TEXT_FILE):
+    print(f"Saving text to {path}...")
+    with open(path, "w", encoding="utf-8") as f:
         for t in texts:
             f.write(t + "\n<|endoftext|>\n")
-
     print("Text file saved.")
 
 
 # -----------------------------
 # Tokenize + Save
 # -----------------------------
-def tokenize_and_save(texts):
+def tokenize_and_save(texts, bin_file=BIN_FILE):
     print("Tokenizing...")
     enc = tiktoken.get_encoding("gpt2")
 
@@ -124,11 +140,8 @@ def tokenize_and_save(texts):
 
     tokens_np = np.array(tokens, dtype=np.uint16)
 
-    print(f"Saving tokens to {TOKENS_FILE}...")
-    np.save(TOKENS_FILE, tokens_np)
-
-    print(f"Saving binary to {BIN_FILE}...")
-    tokens_np.tofile(BIN_FILE)
+    print(f"Saving binary to {bin_file}...")
+    tokens_np.tofile(bin_file)
 
     # sanity check
     print("\nSample decoded text:\n")
@@ -141,15 +154,33 @@ def tokenize_and_save(texts):
 # Main
 # -----------------------------
 def main():
-    wiki_texts, owt_texts = load_data()
-    cleaned_texts = preprocess(wiki_texts, owt_texts)
+    parser = argparse.ArgumentParser(description="Prepare dataset (wiki + owt). Optionally merge FineWeb-Edu parquet files into a second dataset.")
+    parser.add_argument(
+        "--hf-files",
+        type=str,
+        default="",
+        help="Comma-separated paths to local FineWeb-Edu parquet files (e.g. 000_00000.parquet,001_00000.parquet). Produces dataset2.bin alongside the base dataset."
+    )
+    args = parser.parse_args()
 
-    save_text(cleaned_texts)
-    tokenize_and_save(cleaned_texts)
+    if args.hf_files:
+        parquet_paths = [p.strip() for p in args.hf_files.split(",") if p.strip()]
+        fineweb_texts = load_parquet_files(parquet_paths)
 
-    print("\nAll outputs generated successfully.")
+        print("\n=== Building FineWeb-Edu dataset ===")
+        cleaned = preprocess([], [], extra_texts=fineweb_texts)
+        save_text(cleaned, path="dataset2.txt")
+        tokenize_and_save(cleaned, bin_file="dataset2.bin")
+    else:
+        wiki_texts, owt_texts = load_data()
+
+        print("\n=== Building base dataset (wiki + owt) ===")
+        cleaned = preprocess(wiki_texts, owt_texts)
+        save_text(cleaned, path=TEXT_FILE)
+        tokenize_and_save(cleaned, bin_file=BIN_FILE)
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":
     main()
-    
