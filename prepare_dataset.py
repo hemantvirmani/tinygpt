@@ -52,17 +52,22 @@ def is_good(text):
 # -----------------------------
 # Load datasets
 # -----------------------------
-def load_data():
+def load_data(parquet_paths=None):
     print("Loading WikiText-103...")
     wiki = load_dataset("wikitext", "wikitext-103-raw-v1", split="train")
 
-    print("Loading OpenWebText (sample)...")
-    owt = load_dataset(
-        "openwebtext",
-        split=f"train[:{int(OPENWEBTEXT_FRACTION * 100)}%]"
-    )
+    if OPENWEBTEXT_FRACTION:
+        print("Loading OpenWebText (sample)...")
+        owt = load_dataset(
+            "openwebtext",
+            split=f"train[:{int(OPENWEBTEXT_FRACTION * 100)}%]"
+        )
+    else:
+        owt = {"text": []}
 
-    return wiki["text"], owt["text"]
+    fineweb_texts =  load_parquet_files(parquet_paths) if parquet_paths else None
+
+    return wiki["text"], owt["text"], fineweb_texts
 
 
 def load_parquet_files(paths):
@@ -79,23 +84,24 @@ def load_parquet_files(paths):
 # -----------------------------
 # Preprocessing pipeline
 # -----------------------------
-def preprocess(wiki_texts, owt_texts, extra_texts=None):
-    print("Cleaning text...")
-
+def preprocess(wiki_texts, owt_texts, fineweb_texts=None):
     all_texts = []
 
+    print("Cleaning WikiText...")
     for t in wiki_texts:
         ct = clean_text(t)
         if is_good(ct):
             all_texts.append(ct)
 
+    print("Cleaning OpenWebText...")
     for t in owt_texts:
         ct = clean_text(t)
         if is_good(ct):
             all_texts.append(ct)
 
-    if extra_texts:
-        for t in extra_texts:
+    if fineweb_texts:
+        print("Cleaning FineWeb-Edu text...")
+        for t in fineweb_texts:
             ct = clean_text(t)
             if is_good(ct):
                 all_texts.append(ct)
@@ -156,28 +162,19 @@ def tokenize_and_save(texts, bin_file=BIN_FILE):
 def main():
     parser = argparse.ArgumentParser(description="Prepare dataset (wiki + owt). Optionally merge FineWeb-Edu parquet files into a second dataset.")
     parser.add_argument(
-        "--hf-files",
+        "--fwe-files",
         type=str,
         default="",
         help="Comma-separated paths to local FineWeb-Edu parquet files (e.g. 000_00000.parquet,001_00000.parquet). Produces dataset2.bin alongside the base dataset."
     )
     args = parser.parse_args()
-    wiki_texts, owt_texts = load_data()
+    parquet_paths = [p.strip() for p in args.fwe_files.split(",") if p.strip()] if args.fwe_files else None
 
-    if args.hf_files:
-        parquet_paths = [p.strip() for p in args.hf_files.split(",") if p.strip()]
-        fineweb_texts = load_parquet_files(parquet_paths)
+    wiki_texts, owt_texts, fineweb_texts = load_data(parquet_paths=parquet_paths)
 
-        print("\n=== Building FineWeb-Edu dataset ===")
-        cleaned = preprocess(wiki_texts, [], extra_texts=fineweb_texts)
-        save_text(cleaned, path="dataset2.txt")
-        tokenize_and_save(cleaned, bin_file="dataset2.bin")
-    else:
-
-        print("\n=== Building base dataset (wiki + owt) ===")
-        cleaned = preprocess(wiki_texts, owt_texts)
-        save_text(cleaned, path=TEXT_FILE)
-        tokenize_and_save(cleaned, bin_file=BIN_FILE)
+    cleaned = preprocess(wiki_texts, owt_texts, fineweb_texts)
+    save_text(cleaned, path=TEXT_FILE)
+    tokenize_and_save(cleaned, bin_file=BIN_FILE)
 
     print("\nDone.")
 
