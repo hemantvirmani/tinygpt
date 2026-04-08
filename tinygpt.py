@@ -33,6 +33,7 @@ G_WARMPUP_ITERS = 4000 # 10% of G_MAX_ITERS
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
 G_EFFECTIVE_BATCH_SIZE = 8
+G_EVAL_ITERATIONS = 20
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu")
@@ -294,7 +295,7 @@ class TinyGPT(nn.Module):
         return optimizer, scheduler
 
     @torch.no_grad()
-    def _evaluate_loss(self, eval_iters=5) -> torch.Tensor:
+    def _evaluate_loss(self, eval_iters=G_EVAL_ITERATIONS) -> torch.Tensor:
         """Averages loss over multiple batches for a more stable validation metric."""
         was_training = self.training
         self.eval()
