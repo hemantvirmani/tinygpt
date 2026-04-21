@@ -24,12 +24,12 @@ torch.set_float32_matmul_precision('high')
 G_BATCH_SIZE = 8
 G_BLOCK_SIZE = 1024
 G_N_EMBD = 768
-G_MAX_ITERS = 40000
+G_MAX_ITERS = 600000
 G_LR = 3e-4
 G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
-G_WARMPUP_ITERS = 4000 # 10% of G_MAX_ITERS
+G_WARMPUP_ITERS = 4000 # <10% of original schedule; keep short warm-up even for long run
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
 G_EFFECTIVE_BATCH_SIZE = 16
@@ -44,6 +44,11 @@ USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = False
 BINARY_DATASET_FILENAME = "dataset.bin"
 CHECKPOINT_FILE = "tinygpt_latest.pt"
+# Streaming dataset config (used when G_USE_STREAMING=True)
+G_USE_STREAMING = True
+STREAMING_HF_DATASET = "HuggingFaceFW/fineweb-edu"
+STREAMING_HF_SUBSET = "sample-100BT"
+STREAMING_VAL_DOCS = 2000  # first 2000 documents reserved for validation
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
 if torch.cuda.is_available():
@@ -52,22 +57,86 @@ if torch.cuda.is_available():
 @dataclass
 class State:
     tokenizer: Any
-    train_data: np.ndarray
-    val_data: np.ndarray
+    train_data: Any  # np.ndarray when offline; None when streaming
+    val_data: Any    # np.ndarray when offline; None when streaming
     vocab_size: int
+    train_iter: Any = None  # infinite iterator over streaming train batches
+    val_iter: Any = None    # infinite iterator over streaming val batches
+
+def _infinite_iter(loader):
+    """Wraps a DataLoader to yield batches forever, restarting when exhausted."""
+    while True:
+        for batch in loader:
+            yield batch
+
+
+class StreamingTokenDataset(torch.utils.data.IterableDataset):
+    """Streams text from HuggingFace, tokenizes on-the-fly, and yields (x, y) pairs.
+
+    The first STREAMING_VAL_DOCS documents are reserved for validation;
+    all subsequent documents are used for training.
+    """
+    def __init__(self, split: str, block_size: int = G_BLOCK_SIZE):
+        super().__init__()
+        self.split = split
+        self.block_size = block_size
+
+    def __iter__(self):
+        from datasets import load_dataset
+        enc = tiktoken.get_encoding("gpt2")
+        eot = enc.eot_token  # 50256 — appended between documents
+
+        ds = load_dataset(
+            STREAMING_HF_DATASET,
+            STREAMING_HF_SUBSET,
+            split="train",
+            streaming=True,
+        )
+
+        if self.split == "val":
+            ds = ds.take(STREAMING_VAL_DOCS)
+        else:
+            ds = ds.skip(STREAMING_VAL_DOCS)
+
+        buffer = []
+        for example in ds:
+            tokens = enc.encode_ordinary(example["text"])
+            tokens.append(eot)
+            buffer.extend(tokens)
+            while len(buffer) >= self.block_size + 1:
+                chunk = buffer[: self.block_size + 1]
+                yield (
+                    torch.tensor(chunk[:-1], dtype=torch.long),
+                    torch.tensor(chunk[1:], dtype=torch.long),
+                )
+                buffer = buffer[self.block_size + 1 :]
+
 
 def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
-    # Tokenizer and related objects
     tokenizer = tiktoken.get_encoding("gpt2")
     vocab_size = tokenizer.n_vocab
-    # Load training and validation dataset
-    import numpy as np
+
+    if G_USE_STREAMING:
+        print(f"Streaming from {STREAMING_HF_DATASET} / {STREAMING_HF_SUBSET} ...")
+        train_ds = StreamingTokenDataset(split="train", block_size=G_BLOCK_SIZE)
+        val_ds   = StreamingTokenDataset(split="val",   block_size=G_BLOCK_SIZE)
+        # num_workers=0 avoids multiprocessing issues with HuggingFace streaming on Windows
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=G_BATCH_SIZE, num_workers=0)
+        val_loader   = torch.utils.data.DataLoader(val_ds,   batch_size=G_BATCH_SIZE, num_workers=0)
+        return State(
+            tokenizer=tokenizer,
+            train_data=None,
+            val_data=None,
+            vocab_size=vocab_size,
+            train_iter=_infinite_iter(train_loader),
+            val_iter=_infinite_iter(val_loader),
+        )
+
+    # Offline binary path (fallback)
     data = np.memmap(dataset_path, dtype=np.uint16, mode="r")
     data_len = len(data)
     split_idx = int(data_len * split_ratio)
-    train_data = data[:split_idx]
-    val_data = data[split_idx:]
-    return State(tokenizer=tokenizer, train_data=train_data, val_data=val_data, vocab_size=vocab_size)
+    return State(tokenizer=tokenizer, train_data=data[:split_idx], val_data=data[split_idx:], vocab_size=vocab_size)
 
 #Lets do some Self Attention
 class SelfAttention(nn.Module):
@@ -226,6 +295,11 @@ class TinyGPT(nn.Module):
 
     #Load the batch from the dataset
     def _get_batch(self, split: str = "train"):
+        if G_USE_STREAMING:
+            iterator = self.state.train_iter if split == "train" else self.state.val_iter
+            x, y = next(iterator)
+            return x.to(G_DEVICE), y.to(G_DEVICE)
+
         data = self.state.train_data if split == "train" else self.state.val_data
         ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (G_BATCH_SIZE,))
 

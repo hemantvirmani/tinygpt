@@ -12,7 +12,8 @@ import tiktoken
 # Config
 # -----------------------------
 OPENWEBTEXT_FRACTION = 2   # 2% of OpenWebText
-FINEWEB_FRACTION = 10      # more than 7% - atleast - ~1 parquet file out of ~13 in sample-10BT
+FINEWEB_SUBSET = "sample-100BT"   # 100B token pool; use FINEWEB_FRACTION % of it
+FINEWEB_FRACTION = 10             # 10% of sample-100BT ≈ 10B tokens
 MIN_LENGTH = 50
 SEED = 42
 
@@ -62,10 +63,10 @@ def load_data():
         split=f"train[:{OPENWEBTEXT_FRACTION}%]"
     )
 
-    print(f"Loading FineWeb-Edu sample-10BT ({FINEWEB_FRACTION}%)...")
+    print(f"Loading FineWeb-Edu {FINEWEB_SUBSET} ({FINEWEB_FRACTION}%)...")
     fineweb = load_dataset(
         "HuggingFaceFW/fineweb-edu",
-        "sample-10BT",
+        FINEWEB_SUBSET,
         split=f"train[:{FINEWEB_FRACTION}%]"
     )
 
