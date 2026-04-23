@@ -1,4 +1,4 @@
-# !pip install torch tiktoken requests huggingface_hub matplotlib
+# !pip install torch tiktoken requests huggingface_hub matplotlib datasets
 # BINARY_DATASET_FILENAME = "/kaggle/input/datasets/hemantvirmani/gpt-training-dataset/dataset.bin"
 # CHECKPOINT_FILE = "/kaggle/working/tinygpt_latest.pt"
 # BINARY_DATASET_FILENAME = "/workspace/dataset/dataset.bin"
@@ -21,7 +21,7 @@ import numpy as np
 torch.set_float32_matmul_precision('high')
 
 #Hyperparameters
-G_BATCH_SIZE = 8
+G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 1024
 G_N_EMBD = 768
 G_MAX_ITERS = 600000
@@ -32,7 +32,7 @@ G_GRAD_CLIP = 1.0
 G_WARMPUP_ITERS = 4000 # <10% of original schedule; keep short warm-up even for long run
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
-G_EFFECTIVE_BATCH_SIZE = 16
+G_EFFECTIVE_BATCH_SIZE = 32
 G_EVAL_ITERATIONS = 20
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
@@ -546,7 +546,8 @@ def load_model_for_inference() -> TinyGPT:
 def main():
     parser = argparse.ArgumentParser(description="Train TinyGPT or run inference.")
     parser.add_argument("--infer", type=str, help="Run inference with the given prompt.")
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
+
 
     if args.infer:
         model = load_model_for_inference()
