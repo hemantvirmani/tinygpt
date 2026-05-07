@@ -21,19 +21,19 @@ import numpy as np
 torch.set_float32_matmul_precision('high')
 
 #Hyperparameters
-G_BATCH_SIZE = 16
+G_BATCH_SIZE = 32              # increased from 16; try 24 first if OOM
 G_BLOCK_SIZE = 1024
 G_N_EMBD = 768
 G_MAX_ITERS = 600000
-G_LR = 3e-4
+G_LR = 6e-4                    # scaled up from 3e-4 to match larger effective batch
 G_N_LAYERS = 12
 G_WEIGHT_DECAY = 0.1
 G_GRAD_CLIP = 1.0
-G_WARMPUP_ITERS = 4000 # <10% of original schedule; keep short warm-up even for long run
+G_WARMPUP_ITERS = 4000
 G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
-G_EFFECTIVE_BATCH_SIZE = 32
-G_EVAL_ITERATIONS = 20
+G_EFFECTIVE_BATCH_SIZE = 512   # increased from 32; accumulation = 512/G_BATCH_SIZE
+G_EVAL_ITERATIONS = 50         # increased from 20 for more stable val loss estimate
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu")
@@ -41,7 +41,7 @@ G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu
 G_SEED = 1947
 G_SPLIT_RATIO = 0.8
 USE_SDP_ATTENTION = True
-LOAD_CHECKPOINT = False
+LOAD_CHECKPOINT = True
 BINARY_DATASET_FILENAME = "dataset.bin"
 CHECKPOINT_FILE = "tinygpt_latest.pt"
 # Streaming dataset config (used when G_USE_STREAMING=True)
@@ -396,7 +396,7 @@ class TinyGPT(nn.Module):
         print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
         print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
-        start_step = _maybe_load_checkpoint(self, optimizer)
+        start_step = _maybe_load_checkpoint(self, optimizer, scheduler)
 
         steps = []
         train_losses = []
@@ -440,7 +440,7 @@ class TinyGPT(nn.Module):
         _plot_losses(steps, train_losses, val_losses)
 
     # Text Generation Function
-    def generate_text(self, start_text, max_tokens=50):
+    def generate_text(self, start_text, max_tokens=50, temperature=1.0, top_k=None):
         self.eval()
 
         tokens = self.state.tokenizer.encode(start_text)
@@ -450,6 +450,10 @@ class TinyGPT(nn.Module):
             idx_cond = idx[:, -G_BLOCK_SIZE:]
             logits = self(idx_cond)
             logits = logits[:, -1, :]
+            logits = logits / temperature
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = float('-inf')
             probs = F.softmax(logits, dim=-1)
 
             idx_next = torch.multinomial(probs, num_samples=1)
@@ -461,6 +465,7 @@ class TinyGPT(nn.Module):
 def _maybe_load_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: Any = None,
     resume_path: str | None = CHECKPOINT_FILE,
 ) -> int:
     if not resume_path or LOAD_CHECKPOINT == False:
@@ -473,6 +478,8 @@ def _maybe_load_checkpoint(
     ckpt = torch.load(resume_path, map_location=G_DEVICE)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
+    if scheduler is not None and ckpt.get("scheduler_state") is not None:
+        scheduler.load_state_dict(ckpt["scheduler_state"])
     start_step = int(ckpt.get("step", 0)) + 1
     print(f"Resumed from {resume_path} at step {start_step}")
     return start_step
