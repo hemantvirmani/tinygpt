@@ -21,7 +21,7 @@ import numpy as np
 torch.set_float32_matmul_precision('high')
 
 #Hyperparameters
-G_BATCH_SIZE = 32              # increased from 16; try 24 first if OOM
+G_BATCH_SIZE = 16
 G_BLOCK_SIZE = 1024
 G_N_EMBD = 768
 G_MAX_ITERS = 600000
@@ -112,7 +112,7 @@ class StreamingTokenDataset(torch.utils.data.IterableDataset):
                 buffer = buffer[self.block_size + 1 :]
 
 
-def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_DATASET_FILENAME) -> State:
+def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str | None = BINARY_DATASET_FILENAME) -> State:
     tokenizer = tiktoken.get_encoding("gpt2")
     vocab_size = tokenizer.n_vocab
 
@@ -133,6 +133,7 @@ def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str = BINARY_D
         )
 
     # Offline binary path (fallback)
+    assert dataset_path is not None, "dataset_path required when G_USE_STREAMING=False"
     data = np.memmap(dataset_path, dtype=np.uint16, mode="r")
     data_len = len(data)
     split_idx = int(data_len * split_ratio)
@@ -427,7 +428,7 @@ class TinyGPT(nn.Module):
             scheduler.step()
 
             # 3. Logging and Checkpointing
-            if (step + 1) % 100 == 0 or step == 0:
+            if (step + 1) % 100 == 0 or step == start_step:
                 val_loss = self._evaluate_loss(eval_iters=10)
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
@@ -475,7 +476,7 @@ def _maybe_load_checkpoint(
         print(f"Checkpoint not found at {resume_path}. Starting fresh.")
         return 0
 
-    ckpt = torch.load(resume_path, map_location=G_DEVICE)
+    ckpt = torch.load(resume_path, map_location=G_DEVICE, weights_only=False)
     model.load_state_dict(ckpt["model_state"])
     optimizer.load_state_dict(ckpt["optimizer_state"])
     if scheduler is not None and ckpt.get("scheduler_state") is not None:
@@ -492,7 +493,7 @@ def _maybe_save_checkpoint(
     vocab_size: int = 0,
     resume_path: str | None = CHECKPOINT_FILE,
 ) -> None:
-    if resume_path is None or (step + 1) % 1000 != 0:
+    if resume_path is None or (step + 1) % 100 != 0:
         return
     payload = {
         "step": step,
@@ -561,7 +562,7 @@ def main():
         print(model.generate_text(start_text=args.infer, max_tokens=1000))
         return
 
-    file_path = _ensure_dataset()
+    file_path = _ensure_dataset() if not G_USE_STREAMING else None
     # build the state and train the model
     state = build_state(dataset_path=file_path)
     model = TinyGPT(state).to(G_DEVICE)
