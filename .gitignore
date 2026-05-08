@@ -13,8 +13,13 @@ loss_curve.png
 tinygpt.py
 tiny-stories-dataset/
 
-gpt2-training-artifacts/
 
 *.parquet
 dataset2.txt
 dataset2.bin
+
+gpt2-training-artifacts/*.pt
+gpt2-training-artifacts/runpodctl-windows-amd64/
+
+
+gpt2-training-artifacts/.claude/settings.local.json
