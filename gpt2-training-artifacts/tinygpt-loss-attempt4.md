@@ -745,3 +745,57 @@ Resolving data files: 100%
  140/140 [00:00<00:00, 19743.87it/s]
 
 step 426300: train 2.9653 | val 2.9701
+step 426400: train 2.9642 | val 2.8948
+step 426500: train 2.9682 | val 2.9416
+step 426600: train 2.9678 | val 3.1739
+step 426700: train 2.8261 | val 2.9777
+step 426800: train 2.9694 | val 2.9753
+step 426900: train 3.0106 | val 3.0113
+step 427000: train 2.9232 | val 2.9558
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 427100: train 2.8466 | val 2.8880
+step 427200: train 2.9850 | val 3.0576
+step 427300: train 3.0167 | val 2.8816
+step 427400: train 2.9835 | val 2.8987
+step 427500: train 2.9585 | val 2.9456
+step 427600: train 2.7384 | val 2.9990
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 37427.37it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 16829.15it/s]
+
+step 427700: train 2.9798 | val 2.8986
+step 427800: train 2.8917 | val 2.9366
+step 427900: train 2.8662 | val 3.0838
+step 428000: train 3.0424 | val 2.9973
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 428100: train 2.7953 | val 3.0144
+step 428200: train 2.9602 | val 3.0111
+step 428300: train 2.9920 | val 3.0531
+step 428400: train 2.9600 | val 2.8471
+step 428500: train 2.7643 | val 2.9943
+step 428600: train 2.8079 | val 2.9637
+step 428700: train 2.9435 | val 2.9325
+step 428800: train 2.9951 | val 2.9036
+step 428900: train 2.9204 | val 2.9195
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 29413.33it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 17304.76it/s]
+
+step 429000: train 2.7380 | val 2.9761
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 429100: train 2.9460 | val 2.8973
+step 429200: train 2.9675 | val 2.9387
+step 429300: train 2.9358 | val 3.1730
+step 429400: train 2.9305 | val 2.9648
+step 429500: train 2.7388 | val 2.9836
+step 429600: train 2.9376 | val 3.0116
+step 429700: train 2.9755 | val 2.9518
+step 429800: train 2.9676 | val 2.8779
+step 429900: train 2.9132 | val 3.0498
+step 430000: train 2.8088 | val 2.8825
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+
