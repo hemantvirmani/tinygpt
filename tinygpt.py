@@ -429,7 +429,7 @@ class TinyGPT(nn.Module):
 
             # 3. Logging and Checkpointing
             if (step + 1) % 100 == 0 or step == start_step:
-                val_loss = self._evaluate_loss(eval_iters=10)
+                val_loss = self._evaluate_loss(eval_iters=G_EVAL_ITERATIONS)
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
                 val_losses.append(val_loss.item())
