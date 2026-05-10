@@ -798,4 +798,107 @@ step 429800: train 2.9676 | val 2.8779
 step 429900: train 2.9132 | val 3.0498
 step 430000: train 2.8088 | val 2.8825
 Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 430100: train 2.9846 | val 2.8969
+step 430200: train 2.9821 | val 2.9368
+step 430300: train 2.9384 | val 2.9816
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 25216.28it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 8352.10it/s]
+
+step 430400: train 2.6868 | val 2.8997
+step 430500: train 2.8112 | val 2.9459
+step 430600: train 3.0020 | val 3.0807
+step 430700: train 3.0476 | val 2.9938
+step 430800: train 2.9705 | val 2.9985
+step 430900: train 2.9312 | val 3.0042
+step 431000: train 2.8004 | val 3.0666
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 431100: train 3.0137 | val 2.8399
+step 431200: train 2.9652 | val 2.9791
+step 431300: train 2.9470 | val 2.9503
+step 431400: train 2.7806 | val 2.9353
+step 431500: train 2.9180 | val 2.9078
+step 431600: train 2.9631 | val 2.9083
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 30331.85it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 17666.07it/s]
+
+step 431700: train 3.0037 | val 2.9604
+step 431800: train 2.9449 | val 2.8921
+step 431900: train 2.7285 | val 2.9417
+step 432000: train 2.9624 | val 3.1707
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 432100: train 3.0075 | val 2.9578
+step 432200: train 2.9928 | val 2.9671
+step 432300: train 2.9916 | val 3.0083
+step 432400: train 2.7393 | val 2.9557
+step 432500: train 2.9322 | val 2.8752
+step 432600: train 2.9768 | val 3.0468
+step 432700: train 2.9549 | val 2.8711
+step 432800: train 2.9337 | val 2.8985
+step 432900: train 2.7850 | val 2.9463
+step 433000: train 2.9834 | val 2.9759
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 25110.73it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 14846.34it/s]
+
+step 433100: train 2.9773 | val 2.8894
+step 433200: train 2.9107 | val 2.9360
+step 433300: train 2.7899 | val 3.0839
+step 433400: train 2.9881 | val 2.9964
+step 433500: train 2.9638 | val 2.9939
+step 433600: train 3.0162 | val 3.0022
+step 433700: train 2.9108 | val 3.0556
+step 433800: train 2.8088 | val 2.8480
+step 433900: train 2.9390 | val 2.9776
+step 434000: train 2.9528 | val 2.9459
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 434100: train 2.9506 | val 2.9257
+step 434200: train 3.0550 | val 2.9035
+step 434300: train 2.7609 | val 2.9182
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 24697.21it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 14699.54it/s]
+
+step 434400: train 2.9946 | val 2.9599
+step 434500: train 2.9960 | val 2.8865
+step 434600: train 2.9346 | val 2.9358
+step 434700: train 2.7252 | val 3.1702
+step 434800: train 2.9178 | val 2.9652
+step 434900: train 2.8927 | val 2.9650
+step 435000: train 3.0317 | val 3.0031
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 435100: train 2.9528 | val 2.9421
+step 435200: train 2.9376 | val 2.8735
+step 435300: train 2.7633 | val 3.0521
+step 435400: train 2.9850 | val 2.8693
+step 435500: train 3.0059 | val 2.8920
+step 435600: train 2.9341 | val 2.9347
+step 435700: train 2.8198 | val 2.9826
+
+Resolving data files: 100%
+ 2410/2410 [00:00<00:00, 36694.11it/s]
+Resolving data files: 100%
+ 140/140 [00:00<00:00, 15178.29it/s]
+
+step 435800: train 2.8867 | val 2.8972
+step 435900: train 2.9638 | val 2.9246
+step 436000: train 2.9896 | val 3.0755
+Saved checkpoint: /workspace/chkpt/tinygpt_latest.pt
+step 436100: train 2.9520 | val 2.9905
+step 436200: train 2.7708 | val 2.9980
+step 436300: train 2.9437 | val 3.0020
+step 436400: train 2.9481 | val 3.0475
+step 436500: train 2.9025 | val 2.8368
+step 436600: train 2.9391 | val 2.9804
+step 436700: train 2.6744 | val 2.9541
 
