@@ -1,32 +1,26 @@
 # FemtoGPT & TinyGPT
 
-This repo is a learning-first GPT project. My goal is to understand how GPTs work by building a toy GPT model and progressively evolving it into a more serious implementation. I want to understand how GPT learns, not just how to run it.
+This repo is a learning-first GPT project. My goal was to understand how GPTs work by building a toy GPT model and progressively evolving it into a more serious implementation — understanding how GPT learns, not just how to run it.
 
-We start with a minimal, readable model in `femtoGPT.py` (0.2M parameter model) which is based on Andrej Karpathy's minimal GPT, utilizing a character-level tokenizer and trained on the Shakespeare dataset. I used [this youtube video](https://www.youtube.com/watch?v=kCc8FmEb1nY) to develop this model. Its character based tokenizer is custom-made inside its code only, as described in the video too. It has all features including Multihead attention, etc.
+We start with a minimal, readable model in `femtogpt.py` (~10M parameter model) based on Andrej Karpathy's minimal GPT, using a character-level tokenizer trained on the Shakespeare dataset. Reference: [Karpathy's "Let's build GPT" video](https://www.youtube.com/watch?v=kCc8FmEb1nY). It includes all core features including multi-head attention.
 
-`tinygpt.py` is a GPT-2/nano-gpt like transformer model with **163.04M parameters**. It uses tiktoken's GPT-2 tokenizer.
+`tinygpt.py` is a GPT-2/nanoGPT-class decoder-only Transformer with **163.04M parameters**. It uses tiktoken's GPT-2 tokenizer and was trained on FineWeb-Edu (sample-100BT).
 
 ## Checkpoints
 
-Training saves a checkpoint every 1000 steps in tinyGPT. Did not bother to save femtoGPT model yet.
+TinyGPT saves a checkpoint every 100 steps.
 
 ## Reproducibility
 
-We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This seeds both CPU and CUDA (when available).
-
-## Current Focus
-
-- Build a working toy GPT end-to-end.
-- Keep the code simple enough to explain line-by-line.
-- Iterate in small, understandable steps.
+A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier to compare.
 
 ## Performance Optimizations
 
 ### Hardware Performance Optimizations
-- TensorFloat-32 (TF32) precision: set `torch.set_float32_matmul_precision('high')` for 19-bit internal matmul precision. [DONE]
-- bfloat16 mixed precision: use `torch.autocast` for faster, lower-precision training without float16 overflow issues. [DONE]
+- TensorFloat-32 (TF32) precision: `torch.set_float32_matmul_precision('high')` for 19-bit internal matmul precision. [DONE]
+- bfloat16 mixed precision: `torch.autocast` for faster, lower-precision training without float16 overflow issues. [DONE]
 - Kernel fusion via `torch.compile`: fuses ops into a single CUDA kernel to reduce overhead. [DONE]
-- FlashAttention: use `torch.nn.functional.scaled_dot_product_attention` to avoid materializing the NxN attention matrix. [DONE]
+- FlashAttention: `torch.nn.functional.scaled_dot_product_attention` to avoid materializing the NxN attention matrix. [DONE]
 
 ### Algorithmic Optimizations
 - AdamW optimizer with GPT-3 hyperparameters: beta1=0.9, beta2=0.95, epsilon=1e-8. [DONE]
@@ -35,7 +29,6 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 - Global grad clip 1.0 to prevent loss spikes. [DONE]
 - Fused AdamW (`fused=True`) for faster updates. [DONE]
 - Gradient accumulation to reach large effective batch sizes without OOM. [DONE]
-
 
 ## TODO (Living List, not in order of implementation)
 
@@ -47,7 +40,7 @@ We use a fixed random seed (`G_SEED`) so experiments are easier to compare. This
 
 **FemtoGPT** — Uses Shakespeare (Karpathy's dataset).
 
-**TinyGPT** — Streams directly from [FineWeb-Edu sample-100BT](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (~100B tokens of high-quality educational web text) during training. No offline dataset.bin required. The previous offline dataset (~1.25B tokens from WikiText-103 + 2% OpenWebText + 10% FineWeb-Edu sample-10BT) is still available on HuggingFace/Kaggle for reference.
+**TinyGPT** — Streams directly from [FineWeb-Edu sample-100BT](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (~100B tokens of high-quality educational web text) during training. No offline dataset.bin required. Earlier attempts used a smaller offline dataset (~2.5 GB from FineWeb-Edu sample-10BT).
 
 ### prepare_dataset.py
 
@@ -57,36 +50,29 @@ Tokenizer: `tiktoken` with GPT-2 encoding.
 
 ## Results
 
-### Target
-Train Loss: ~2.0–2.5  
-Val Loss: ~2.0–2.5
+### FemtoGPT (~10M params, 6 layers, 6 heads, embd=384, ctx=256, char-level tokenizer)
 
-### FemtoGPT
-
-| Date | Params | Config | Train Loss | Val Loss |
-|------|--------|--------|-----------|---------|
-| 3/19 | 10.8M | batch=64, ctx=256, embd=384, layers=6, heads=6, iters=2000, lr=3e-4 | 1.3349 | 1.6529 |
-
-FemtoGPT loss is already in the target range.
+| Config | Train Loss | Val Loss |
+|--------|-----------|---------|
+| batch=64, iters=2000, lr=3e-4 | 1.3349 | 1.6529 |
 
 ### TinyGPT (163.04M params, 12 layers, 12 heads, embd=768, ctx=1024)
 
-| Attempt | Steps | Dataset | Eff. Batch | Train Loss | Val Loss | Notes |
-|---------|-------|---------|-----------|-----------|---------|-------|
-| 1 (3/27) | 100k | Offline ~1.25B tokens (10% FineWeb-Edu sample-10BT + WikiText + OWT) | 16 | 3.2916 | 3.6472 | Val loss diverging — overfitting on finite dataset |
-| 2 (4/7) | 100k | Streaming FineWeb-Edu sample-100BT | 32 | 3.4189 | 3.4164 | Train ≈ val, no overfitting. Larger effective batch stabilizes training |
-| 3 (in progress) | — | Streaming FineWeb-Edu sample-100BT | 32 | — | — | Target: 600k steps (~10B tokens) |
+| Attempt | Steps | Dataset | Eff. Batch | LR | Best Val Loss | Notes |
+|---------|-------|---------|-----------|-----|--------------|-------|
+| 1 | ~60K | Offline curated corpus | 16 | 1e-5 | ~3.64 | Resumed from prior run; very low LR; dataset exhausted |
+| 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Still declining at cutoff; run stopped at 100K step limit |
+| 3 | 379,400 | FineWeb-Edu 100BT, streaming | 32 | 3e-4 | **3.1878** (step 376K) | Slow crawl due to small effective batch; checkpoint saved for attempt 4 |
+| 4 | 59,600 | FineWeb-Edu 100BT, streaming | 512 | 6e-4 | **2.8368** (step 436.5K) | 16× batch increase; matched nanoGPT GPT-2 small benchmark |
 
-**Key takeaway from attempt 1→2:** Switching from a finite offline dataset to streaming eliminated the train/val gap entirely. The model now sees fresh data every step and cannot overfit.
+**Key lesson across attempts:** Dataset size and effective batch size are the two most important variables. Attempts 1 and 2 were limited by dataset size. Attempt 3 was limited by gradient noise from a small effective batch (32). Scaling the batch 16× in attempt 4 delivered more improvement in 60K steps than attempt 3 did in its final 300K steps.
 
-**Expected trajectory (attempt 3):**
+**nanoGPT GPT-2 small reference** (124M params, OpenWebText): val loss ~2.85. TinyGPT at 163M params on FineWeb-Edu reached **2.8368** — effectively matching the benchmark.
 
-| Steps | Est. Train Loss |
-|-------|----------------|
-| 100k  | ~3.3–3.4 |
-| 200k  | ~3.0–3.1 |
-| 400k  | ~2.7–2.8 |
-| 600k  | ~2.5–2.6 |
+## Training Story & Learning Journey
+
+- [Training Story](gpt2-training-artifacts/tinygpt-training-story.md) — detailed account of all four attempts, loss curve analysis, and final results.
+- [Learning Journey](gpt2-training-artifacts/tinygpt-learning-journey.md) — how the codebase evolved commit-by-commit, what each phase taught the model, and open questions about Transformer architecture.
 
 ## Learning Roadmap
 
@@ -95,6 +81,6 @@ Run → Understand → Control → Scale → Customize
 ## Credits
 
 * Inspired by Andrej Karpathy and GPT architectures.
-* For TinyGPT, I used ChatGPT (not codex) for helping with the starting code.
-* Both ChatGPT and Gemini have answered a bunch of stupid questions to it.
+* For TinyGPT, I used ChatGPT for helping with the starting code.
+* Both ChatGPT and Gemini answered a lot of questions along the way.
 * Thanks to Kaggle and RunPod for GPU access.
