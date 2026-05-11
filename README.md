@@ -1,6 +1,6 @@
 # FemtoGPT & TinyGPT
 
-This repo is a learning-first GPT project. My goal was to understand how GPTs work by building a toy GPT model and progressively evolving it into a more serious implementation — understanding how GPT learns, not just how to run it.
+This repo is meant to build hands-on intuition for attention mechanisms, embeddings, fine-tuning, etc. By the end of it, we will understand working of GPTs by building a toy model and an evolved model.
 
 We start with a minimal, readable model in `femtogpt.py` (~10M parameter model) based on Andrej Karpathy's minimal GPT, using a character-level tokenizer trained on the Shakespeare dataset. Reference: [Karpathy's "Let's build GPT" video](https://www.youtube.com/watch?v=kCc8FmEb1nY). It includes all core features including multi-head attention.
 
@@ -8,7 +8,7 @@ We start with a minimal, readable model in `femtogpt.py` (~10M parameter model) 
 
 ## Checkpoints
 
-TinyGPT saves a checkpoint every 100 steps.
+TinyGPT saves a checkpoint every 1000 steps.
 
 ## Reproducibility
 
@@ -32,7 +32,6 @@ A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier
 
 ## TODO (Living List, not in order of implementation)
 
-- Temperature sampling, Top-k / Top-p sampling
 - Fine Tuning
 - RLHF
 

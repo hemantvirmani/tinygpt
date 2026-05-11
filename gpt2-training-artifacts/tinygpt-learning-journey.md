@@ -1,14 +1,30 @@
 # Building a GPT-2–Class Model from Scratch: A Learning Journey
 
-*H2 March – H1 May 2026 | Two months, two models, one 163M-parameter language model that matches GPT-2 small*
+Late March – early May 2026 | Two months, two models, one 163M-parameter language model that matches GPT-2 small
 
 ---
 
-## How This Started
+## The Destination
 
-This wasn't a project that was planned end-to-end. It started as a single file — `tinygpt.py` — with a comment that said *"adding basic model. lot more needs to be done."* That first commit was in H2 March 2026, and over the next eight weeks the codebase grew into a production-quality training run on a 100-billion-token dataset.
+This is a from-scratch implementation of a 163M-parameter GPT-2–class language model, built over two months across two models, four training attempts, and ~43.6 billion tokens of training data. The final model — TinyGPT — reached a validation loss of **2.8368** (perplexity 17.1), matching Karpathy's nanoGPT reproduction of GPT-2 small: the canonical benchmark for this model class.
 
-The commit history tells the story better than any retrospective could. Every bug fixed, every paper read, every training run that hit a wall and had to be rethought — it's all there in the log.
+The repo also includes **FemtoGPT**, a ~10M parameter character-level model on Shakespeare that served as the fast-iteration testbed throughout development.
+
+---
+
+## Key Technical Learnings
+
+1. **Dataset size before architecture.** Attempting to scale a 163M parameter model on a small dataset is wasted compute. The ceiling is set by the data, not the model.
+
+2. **Batch size is a first-class hyperparameter.** Doubling the effective batch size has a more predictable effect on training efficiency than doubling the number of steps. With a noisy gradient, more steps doesn't necessarily mean more learning.
+
+3. **Checkpointing is infrastructure, not an afterthought.** Saving the full training state — model weights, optimizer state, scheduler state, step count — is what makes long multi-week runs recoverable. A scheduler resume bug discovered mid-run was a real example of what happens when state is partially saved.
+
+4. **The validation loss gap reveals overfitting.** The narrow train/val gap (~0.05–0.10) throughout the TinyGPT run confirmed the model was generalizing. When that gap widens, you have a problem.
+
+5. **Hardware-aware optimization compounds.** Flash attention, bfloat16, gradient clipping, `torch.compile` — none of these changes the model's architecture. They only change how efficiently the same computation runs. Together they made the difference between a training run that's feasible and one that isn't.
+
+6. **The learning curve is always front-loaded.** The model improves dramatically in the first 1% of training and incrementally for the remaining 99%. This is universal — it's the nature of gradient descent on language models. The early losses are "easy" (learning that `the` is common), while the late losses require learning subtle relationships that only appear in rare contexts.
 
 ---
 
@@ -36,7 +52,15 @@ The magic is that none of this was hand-coded with rules. The model learns what 
 
 ---
 
-## Phase 1: First Code (H2 March 2026)
+## How This Started
+
+This wasn't a project that was planned end-to-end. It started as a single file — `tinygpt.py` — with a comment that said *"adding basic model. lot more needs to be done."* That first commit was in late March 2026, and over the next eight weeks the codebase grew into a production-quality training run on a 100-billion-token dataset.
+
+The commit history tells the story better than any retrospective could. Every bug fixed, every paper read, every training run that hit a wall and had to be rethought — it's all there in the log.
+
+---
+
+## Phase 1: First Code (late March 2026)
 
 The first commit added a basic model. The structure was already recognizable as a Transformer — embedding layer, attention, feed-forward — but many things that a production training loop needs were missing. The commits that followed in rapid succession fill in the gaps:
 
@@ -52,17 +76,19 @@ What the model was learning to do at this stage: nothing — it wasn't training 
 
 ---
 
-## Phase 2: The Fork — FemtoGPT and TinyGPT Diverge (H2 March 2026)
+## Phase 2: The Fork — FemtoGPT and TinyGPT Diverge (late March 2026)
 
 This is the moment the codebase split into two files with different purposes.
 
 **FemtoGPT** (`femtogpt.py`) became a small, educational model:
+
 - Shakespeare text as the training dataset (~1MB of text)
 - Character-level tokenizer: every unique character in Shakespeare is a "token" (~65 tokens total)
 - ~10M parameters: 384-dimensional embeddings, 6 layers, 6 attention heads
 - Purpose: learn the mechanics in a fast feedback loop
 
 **TinyGPT** (`tinygpt.py`) remained the production target:
+
 - Web-scale dataset via HuggingFace
 - GPT-2's subword tokenizer (tiktoken), 50,257 tokens
 - 163M parameters: 768-dimensional embeddings, 12 layers, 12 heads
@@ -74,7 +100,7 @@ At the same time, TinyGPT got the GPT-2 subword tokenizer (replacing an HF token
 
 ---
 
-## Phase 3: Building the Real Training Loop (H2 March 2026)
+## Phase 3: Building the Real Training Loop (late March 2026)
 
 Three important additions:
 
@@ -98,13 +124,14 @@ The training code was reorganized into a `TinyGPT` class with proper methods for
 
 ---
 
-## Phase 4: FemtoGPT Reaches a Stable State (H2 March 2026)
+## Phase 4: FemtoGPT Reaches a Stable State (late March 2026)
 
 FemtoGPT hit a milestone: *"a good version of femto GPT — used Andrej's hyperparams and multi-head attention."* This matched Karpathy's nanoGPT tutorial hyperparameters exactly, producing a small model that could generate Shakespeare-like text after a short training run.
 
 Shortly after came *"significant scale up femto model to get better performance"* — bumping the model size and training longer. FemtoGPT was now a reliable testbed.
 
 What FemtoGPT could do at this point: generate plausible-looking Elizabethan text. Not great, not coherent over long passages, but character-by-character it sounded Shakespearean. The model had learned:
+
 - Which characters follow which (spelling patterns)
 - Common words and their frequency
 - Basic sentence structure — linebreaks, punctuation patterns
@@ -114,7 +141,7 @@ It had not learned: meaning, coherence across sentences, or any real understandi
 
 ---
 
-## Phase 5: Bringing TinyGPT Up to GPT-2 Architecture (H2 March 2026)
+## Phase 5: Bringing TinyGPT Up to GPT-2 Architecture (late March 2026)
 
 The most technically dense period in the commit history. Several commits in rapid succession, each adding a significant piece of the GPT-2 architecture to TinyGPT.
 
@@ -140,7 +167,7 @@ Following Karpathy's recommendation: removing biases from the linear layers. In 
 
 ---
 
-## Phase 6: Hardware Optimizations (H2 March 2026)
+## Phase 6: Hardware Optimizations (late March 2026)
 
 A cluster of optimizations from Karpathy's video series on reproducing GPT-2:
 
@@ -158,11 +185,12 @@ Each of these individually gives a few percent improvement. Together they add up
 
 ---
 
-## Phase 7: First Real Training Runs (H2 March – H1 April 2026)
+## Phase 7: First Real Training Runs (late March – early April 2026)
 
 A separate inference path was added — separating the generate function from the training loop. Training and inference have different needs (inference doesn't need gradients), and keeping them separate makes both cleaner.
 
 Shortly after: three commits that improved robustness:
+
 - Saving the learning rate scheduler state to checkpoints so training can resume with the correct LR rather than restarting from warmup.
 - Increasing the number of batches used to estimate validation loss. More samples = more reliable estimate.
 - Increasing the micro-batch size.
@@ -178,7 +206,7 @@ Both runs taught the same lesson: the ceiling isn't the architecture or the opti
 
 ---
 
-## Phase 8: The Switch to FineWeb-Edu 100BT (H2 April 2026)
+## Phase 8: The Switch to FineWeb-Edu 100BT (late April 2026)
 
 This is where Attempt 3 began.
 
@@ -188,13 +216,14 @@ The dataset lesson is perhaps the most important practical insight from this pro
 
 ---
 
-## Phase 9: The Crawl and the Fix (H2 April – H1 May 2026)
+## Phase 9: The Crawl and the Fix (late April – early May 2026)
 
 Attempt 3 ran for **379,400 steps** with these settings:
+
 - Effective batch size: **32 sequences** (32,768 tokens per step)
 - Learning rate: 3e-4
 
-It was slow. Very slow. The model fell quickly from val loss 10.24 to ~3.92 in the first 10,000 steps, then spent the next **369,000 steps** grinding from ~3.92 down to ~3.19. Less than 1 nat of improvement over 97% of the run.
+It was slow. Very slow. The model fell quickly to ~3.92 in the first 10,000 steps, then spent the next **369,000 steps** grinding from ~3.92 down to ~3.19. Less than 1 nat of improvement over 97% of the run.
 
 The culprit: **gradient noise**. With a batch size of 32, each training step is estimating the gradient from a tiny sample of the data. That estimate is noisy — sometimes pointing in a slightly wrong direction. The model inches forward but frequently gets pushed sideways. It's like trying to navigate by a compass that's right on average but randomly off by 20 degrees on any given reading.
 
@@ -206,7 +235,7 @@ Larger batches give better gradient estimates. Better estimates mean more reliab
 
 ## Where the Model Landed
 
-**Final best validation loss: 2.8368 at step 436,500 (~17.1 perplexity)**
+Final best validation loss: 2.8368 at step 436,500 (~17.1 perplexity)
 
 The canonical benchmark is Karpathy's nanoGPT reproduction of GPT-2 small (124M parameters), which reaches ~val loss 2.85 on OpenWebText. TinyGPT (163M parameters, trained on fineweb-edu) reached **2.8368** — effectively matching, and marginally beating, the reference.
 
@@ -221,8 +250,7 @@ The model had seen ~43.6 billion tokens total — roughly 13× what the Chinchil
 Here's a high-level map of what the model was learning at different stages — in terms a high school student can follow:
 
 | Steps | Val Loss | What the model learned |
-|---|---|---|
-| 1 | 10.24 | Nothing. Random weights, random outputs. Like a newborn. |
+| --- | --- | --- |
 | 1,000 | ~6.1 | Basic statistics: some letters/words appear more than others |
 | 5,000 | ~4.15 | Common words, basic spelling, which words appear near each other |
 | 10,000 | ~3.92 | Rough sentence structure; punctuation patterns; common phrases |
@@ -238,7 +266,7 @@ The early steps (1–10k) are where the most dramatic learning happens. Everythi
 
 ## What I Still Wonder
 
-**How did the "Attention is All You Need" authors develop the original intuition?**
+### How did the "Attention is All You Need" authors develop the original intuition?
 
 It's easy to understand the Transformer *after* reading dozens of explainers. But the 2017 paper replaced recurrent networks (RNNs/LSTMs, which processed sequences step-by-step, like reading a sentence one word at a time) with something that seemed audacious at the time: every position attending to every other position, all at once. No sequential processing, just a big parallelizable attention matrix.
 
@@ -250,29 +278,13 @@ The honest answer is probably: they didn't fully know. They had a strong hypothe
 
 Science often works this way. The insight comes first, and the full explanation of why it generalizes follows later. The Transformer's self-attention mechanism turned out to have a beautiful property: it's a general-purpose *sequence-to-sequence function approximator* that can be parallelized efficiently on GPUs. Once you have that, plus enough data and compute, the architecture can learn almost any pattern in language.
 
-**Why does a text-translation architecture work for everything else?**
+### Why does a text-translation architecture work for everything else?
 
 Underneath the translation task is a more general problem: *learn a representation of each input token that encodes its meaning in context*. That's what attention does — it lets each token's representation be informed by all other tokens. "Bank" next to "river" learns a different vector than "bank" next to "interest rate."
 
 These contextual representations turn out to be useful for far more than translation. They're useful for any task that involves understanding language. Text generation is just decoding those representations one step at a time. The architecture didn't contain anything translation-specific; it contained something more fundamental.
 
 The community discovered this empirically between 2018 and 2020, with BERT, GPT, and GPT-2 showing that the same architecture, slightly modified, worked for classification, generation, question answering, summarization — basically everything. At that point, the question shifted from "why does it work for translation" to "is there a task where it *doesn't* work?" And the answer, increasingly, has been: not many.
-
----
-
-## Key Technical Learnings
-
-1. **Dataset size before architecture.** Attempting to scale a 163M parameter model on a small dataset is wasted compute. The ceiling is set by the data, not the model.
-
-2. **Batch size is a first-class hyperparameter.** Doubling the effective batch size has a more predictable effect on training efficiency than doubling the number of steps. With a noisy gradient, more steps doesn't necessarily mean more learning.
-
-3. **Checkpointing is infrastructure, not an afterthought.** Saving the full training state — model weights, optimizer state, scheduler state, step count — is what makes long multi-week runs recoverable. A scheduler resume bug discovered mid-run was a real example of what happens when state is partially saved.
-
-4. **The validation loss gap reveals overfitting.** The narrow train/val gap (~0.05–0.10) throughout the TinyGPT run confirmed the model was generalizing. When that gap widens, you have a problem.
-
-5. **Hardware-aware optimization compounds.** Flash attention, bfloat16, gradient clipping, `torch.compile` — none of these changes the model's architecture. They only change how efficiently the same computation runs. Together they made the difference between a training run that's feasible and one that isn't.
-
-6. **The learning curve is always front-loaded.** The model improves dramatically in the first 1% of training and incrementally for the remaining 99%. This is universal — it's the nature of gradient descent on language models. The early losses are "easy" (learning that `the` is common), while the late losses require learning subtle relationships that only appear in rare contexts.
 
 ---
 

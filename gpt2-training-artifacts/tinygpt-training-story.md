@@ -4,9 +4,9 @@ Training run: April–May 2026 | Dataset: FineWeb-Edu (sample-100BT) | Total ste
 
 ---
 
-## The Model
+## The Result
 
-TinyGPT is a GPT-2–class autoregressive language model trained from scratch.
+After four set of training attempts spanning couple of months, TinyGPT reached a best validation loss of **2.8368** (perplexity 17.1) — matching Karpathy's nanoGPT reproduction of GPT-2 small, the canonical benchmark for this model class.
 
 | Parameter | Value |
 |---|---|
@@ -21,28 +21,45 @@ TinyGPT is a GPT-2–class autoregressive language model trained from scratch.
 | Attention | Flash attention (scaled dot-product) |
 | Precision | bfloat16 |
 
+![TinyGPT Training Loss Curve](tinygpt_loss_curve.png)
+
 ---
 
-## The Loss Curve
+## The Two Lessons That Mattered
 
-![TinyGPT Training Loss Curve](tinygpt_loss_curve.png)
+Two variables decided the outcome of every training attempt. Everything else was secondary.
+
+**Dataset size.** The first two attempts both hit hard ceilings — not because the model stopped learning, but because the training data ran out. Switching to a 100-billion-token stream immediately unlocked sustained learning that neither earlier run achieved.
+
+**Effective batch size.** Attempt 3 spent 379,000 steps grinding from val loss ~3.92 to ~3.19. Attempt 4 spent 60,000 steps — with 16× the batch size — and improved by more than Attempt 3 did in its final 300,000 steps. Larger batches produce more reliable gradient estimates. More reliable estimates produce more consistent learning.
+
+---
+
+## All Attempts at a Glance
+
+| Attempt | Steps | Dataset | Eff. Batch | LR | Best Val Loss | What stopped it |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | ~60K | Offline curated corpus | 16 | 1e-5 | ~3.64 | Dataset exhausted; LR too low |
+| 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Run hit 100K step limit; still declining |
+| 3 | 379,400 | FineWeb-Edu 100BT, streaming | 32 | 3e-4 | **3.1878** (step 376K) | Gradient noise from small batch |
+| 4 | 59,600 | FineWeb-Edu 100BT, streaming | 512 | 6e-4 | **2.8368** (step 436.5K) | Matched benchmark; training stopped |
 
 ---
 
 ## A Note on Attempt Numbering
 
-This document covers Attempt 3 and Attempt 4. There were two earlier runs:
+This document covers Attempt 3 and Attempt 4 in detail. There were two earlier runs:
 
 - **Attempt 1** (~60K steps total): resumed from a prior training run (attempt-0) with LR=1e-5 — an extremely conservative rate for a 163M model. By the time this notebook picked it up, val loss was already at ~3.64 and essentially flat. The tiny LR meant any further descent was negligible. The dataset (a smaller curated corpus) had run dry. Final stall: ~**3.6**.
-- **Attempt 2** (100K steps): fresh start on FineWeb-Edu 10BT (~2.5 GB), offline, with LR=3e-4 and effective batch=32. Val loss fell to 4.03 by step 10,000, then ground slowly down — 3.70 by step 30,000, 3.51 by step 50,000, reaching a minimum of **3.34** at step 99,400. The run ended at the 100K step limit with val 3.4164; loss was still slowly declining at the cutoff. Final: ~**3.4**.
+- **Attempt 2** (100K steps): fresh start on FineWeb-Edu 10BT (~2.5 GB), offline, with LR=3e-4 and effective batch=32. Val loss fell to 4.03 by step 10,000, then ground slowly down — 3.70 by step 30,000, 3.51 by step 50,000, reaching a minimum of **3.34** at step 99,400. The run ended at the 100K step limit with val 3.4164; loss was still very slowly declining at the cutoff. Final: ~**3.4**.
 
-The key lesson from both failures: **dataset size was the bottleneck, not the architecture or training recipe.** Both runs hit hard ceilings not because the model stopped learning, but because the data ran out before it did. Switching to [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (sample-100BT) — a full 100-billion-token stream — immediately unlocked sustained learning for a full 600k-step run. Attempt 3 is where the real training story begins.
+The key lesson from both: **dataset size was the bottleneck, not the architecture or training recipe.** Both runs hit hard ceilings not because the model stopped learning, but because the data ran out before it did. Switching to [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (sample-100BT) — a full 100-billion-token stream — immediately unlocked sustained learning for a full 600k-step run. Attempt 3 is where the real training story begins.
 
 ---
 
 ## Phase 1 — Cold Start (Attempt 3)
 
-**Steps 1 → 379,400 | LR = 3e-4 | Effective batch = 32 | ~12.4B tokens seen**
+Steps 1 → 379,400 | LR = 3e-4 | Effective batch = 32 | ~12.4B tokens seen
 
 Training began from random initialization in April 2026. Hyperparameters were conservative:
 
@@ -55,11 +72,10 @@ Training began from random initialization in April 2026. Hyperparameters were co
 
 ### The Fast Descent (Steps 1–10,000)
 
-The model learned the basics of language almost immediately. From an initial val loss of **10.24** (essentially random guessing over 50,000 tokens), it dropped to **~3.92** within the first 10,000 steps — a fall of 6.3 nats. This is the phase where the model learns word co-occurrence, basic grammar, and common phrases.
+The model learned the basics of language almost immediately. Starting from random weights, it dropped to **~3.92** within the first 10,000 steps. This is the phase where the model learns word co-occurrence, basic grammar, and common phrases.
 
 | Step | Val loss | Perplexity |
 |---|---|---|
-| 1 | 10.24 | ~27,900 |
 | 1,000 | 6.10 | ~445 |
 | 2,000 | 5.36 | ~213 |
 | 5,000 | ~4.15 | ~63 |
@@ -67,7 +83,7 @@ The model learned the basics of language almost immediately. From an initial val
 
 ### The Long Crawl (Steps 10,000–379,000)
 
-After the initial steep descent, progress slowed to a crawl. The model spent the next **369,000 steps** — over 97% of the first run — inching from val loss ~3.92 down to ~3.30. That's only 0.62 nats of improvement over 369k steps, compared to 6.3 nats in the first 10k. Loss was still falling — but barely. This pattern matches what was seen in Attempt 2: after the fast early drop, each additional 4,000 steps bought only ~0.2 nats of improvement, with high variance masking real progress.
+After the initial steep descent, progress slowed to a crawl. The model spent the next **369,000 steps** — over 97% of the first run — inching from val loss ~3.92 down to ~3.30. Loss was still falling — but barely. This pattern matches what was seen in Attempt 2: after the fast early drop, each additional 4,000 steps bought only ~0.2 nats of improvement, with high variance masking real progress.
 
 Average val loss by phase (5k-step windows):
 
@@ -87,7 +103,7 @@ The best val loss achieved in Phase 1 was **3.1878** at step 376,000. This check
 
 ## Phase 2 — Breaking the Plateau (Attempt 4)
 
-**Steps 379,100 → 438,700 | LR = 6e-4 | Effective batch = 512 | ~31.2B tokens seen**
+Steps 379,100 → 438,700 | LR = 6e-4 | Effective batch = 512 | ~31.2B tokens seen
 
 Phase 2 began in May 2026, resuming from the step-379,000 checkpoint with two key changes:
 
