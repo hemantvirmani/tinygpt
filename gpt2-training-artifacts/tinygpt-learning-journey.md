@@ -10,21 +10,49 @@ This is a from-scratch implementation of a 163M-parameter GPT-2–class language
 
 The repo also includes **FemtoGPT**, a ~10M parameter character-level model on Shakespeare that served as the fast-iteration testbed throughout development.
 
+| Parameter | Value |
+| --- | --- |
+| Architecture | GPT-2 (decoder-only Transformer) |
+| Parameters | **163.04M** (162.9M decayed + 125K non-decayed) |
+| Layers | 12 |
+| Attention heads | 12 |
+| Embedding dimension | 768 |
+| Context length | 1,024 tokens |
+| Vocabulary | GPT-2 tokenizer (50,257 tokens) |
+| Dataset | HuggingFaceFW/fineweb-edu (sample-100BT) |
+| Attention | Flash attention (scaled dot-product) |
+| Precision | bfloat16 |
+
+![TinyGPT Training Loss Curve](tinygpt_loss_curve.png)
+
 ---
 
 ## Key Technical Learnings
 
-1. **Dataset size before architecture.** Attempting to scale a 163M parameter model on a small dataset is wasted compute. The ceiling is set by the data, not the model.
+1. **Dataset size before architecture.** Attempting to scale a 163M parameter model on a small dataset is wasted compute. The ceiling is set by the data, not the model. Attempts 1 and 2 hit hard ceilings at ~3.6 and ~3.4 respectively simply because the training data ran out before the model did.
 
-2. **Batch size is a first-class hyperparameter.** Doubling the effective batch size has a more predictable effect on training efficiency than doubling the number of steps. With a noisy gradient, more steps doesn't necessarily mean more learning.
+2. **Batch size is a first-class hyperparameter.** Phase 1 spent 379k steps with batch=32 and reached val loss 3.19. Phase 2 spent 60k steps with batch=512 and surpassed that by 0.35 nats. With a noisy gradient, more steps doesn't necessarily mean more learning — each Phase 2 step processed 16× more tokens and produced 16× more reliable gradient estimates.
 
-3. **Checkpointing is infrastructure, not an afterthought.** Saving the full training state — model weights, optimizer state, scheduler state, step count — is what makes long multi-week runs recoverable. A scheduler resume bug discovered mid-run was a real example of what happens when state is partially saved.
+3. **The model stops improving when training stops, not before.** At the point training was halted (step 438,700), new val loss lows were still being set. There was no plateau, no diminishing returns. A continuation to 600k steps would have improved the model further.
 
-4. **The validation loss gap reveals overfitting.** The narrow train/val gap (~0.05–0.10) throughout the TinyGPT run confirmed the model was generalizing. When that gap widens, you have a problem.
+4. **Checkpointing is infrastructure, not an afterthought.** Saving the full training state — model weights, optimizer state, scheduler state, step count — is what makes long multi-week runs recoverable. A scheduler resume bug discovered mid-run was a real example of what happens when state is partially saved.
 
-5. **Hardware-aware optimization compounds.** Flash attention, bfloat16, gradient clipping, `torch.compile` — none of these changes the model's architecture. They only change how efficiently the same computation runs. Together they made the difference between a training run that's feasible and one that isn't.
+5. **The validation loss gap reveals overfitting.** The narrow train/val gap (~0.05–0.10) throughout the TinyGPT run confirmed the model was generalizing. When that gap widens, you have a problem.
 
-6. **The learning curve is always front-loaded.** The model improves dramatically in the first 1% of training and incrementally for the remaining 99%. This is universal — it's the nature of gradient descent on language models. The early losses are "easy" (learning that `the` is common), while the late losses require learning subtle relationships that only appear in rare contexts.
+6. **Hardware-aware optimization compounds.** Flash attention, bfloat16, gradient clipping, `torch.compile` — none of these changes the model's architecture. They only change how efficiently the same computation runs. Together they made the difference between a training run that's feasible and one that isn't.
+
+7. **The learning curve is always front-loaded.** The model improves dramatically in the first 1% of training and incrementally for the remaining 99%. This is universal — it's the nature of gradient descent on language models. The early losses are "easy" (learning that `the` is common), while the late losses require learning subtle relationships that only appear in rare contexts.
+
+---
+
+## All Attempts at a Glance
+
+| Attempt | Steps | Dataset | Eff. Batch | LR | Best Val Loss | What stopped it |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | ~60K | Offline curated corpus | 16 | 1e-5 | ~3.64 | Dataset exhausted; LR too low |
+| 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Run hit 100K step limit; still declining |
+| 3 | 379,400 | FineWeb-Edu 100BT, streaming | 32 | 3e-4 | **3.1878** (step 376K) | Gradient noise from small batch |
+| 4 | 59,600 | FineWeb-Edu 100BT, streaming | 512 | 6e-4 | **2.8368** (step 436.5K) | Matched benchmark; training stopped |
 
 ---
 
@@ -200,7 +228,7 @@ These are the small-but-important infrastructure commits that happen when you've
 This period also covers Attempt 1 and Attempt 2 — the first real training runs, both of which hit dataset ceilings:
 
 - **Attempt 1** (~60K steps, resumed from a prior run): val loss reached ~3.64 and stopped improving. The dataset was too small, and the learning rate (1e-5) was too conservative to push through the noise.
-- **Attempt 2** (100K steps, FineWeb-Edu 10BT, ~2.5 GB, offline): a much better run. Val loss fell to 4.03 by step 10,000, then ground slowly to a minimum of **3.34** at step 99,400. The run hit the 100K step limit with val 3.4164 — still declining, not truly stalled. The ~2.5 GB dataset was the ceiling.
+- **Attempt 2** (100K steps, FineWeb-Edu 10BT, ~2.5 GB, offline): a much better run. Val loss fell to 4.03 by step 10,000, then ground slowly — 3.70 by step 30,000, 3.51 by step 50,000 — to a minimum of **3.34** at step 99,400. The run hit the 100K step limit with val 3.4164 — still declining, not truly stalled. The ~2.5 GB dataset was the ceiling.
 
 Both runs taught the same lesson: the ceiling isn't the architecture or the optimizer. It's the data.
 
@@ -218,18 +246,80 @@ The dataset lesson is perhaps the most important practical insight from this pro
 
 ## Phase 9: The Crawl and the Fix (late April – early May 2026)
 
-Attempt 3 ran for **379,400 steps** with these settings:
+Attempt 3 ran for **379,400 steps** on FineWeb-Edu 100BT with conservative settings:
 
-- Effective batch size: **32 sequences** (32,768 tokens per step)
-- Learning rate: 3e-4
+| Setting | Value |
+| --- | --- |
+| Learning rate | 3e-4 |
+| Effective batch size | 32 sequences (2 accumulation steps × 16 micro-batch) |
+| Tokens per step | 32 × 1,024 = **32,768** |
+| LR schedule | Linear warmup (4,000 steps) → Cosine decay to 3e-5 |
 
-It was slow. Very slow. The model fell quickly to ~3.92 in the first 10,000 steps, then spent the next **369,000 steps** grinding from ~3.92 down to ~3.19. Less than 1 nat of improvement over 97% of the run.
+### The Fast Descent (Steps 1–10,000)
 
-The culprit: **gradient noise**. With a batch size of 32, each training step is estimating the gradient from a tiny sample of the data. That estimate is noisy — sometimes pointing in a slightly wrong direction. The model inches forward but frequently gets pushed sideways. It's like trying to navigate by a compass that's right on average but randomly off by 20 degrees on any given reading.
+The model learned the basics of language almost immediately. Starting from random weights, it fell to **~3.92** within the first 10,000 steps — learning word co-occurrence, basic grammar, and common phrases.
 
-The fix in Attempt 4 was a 16× increase in batch size (to 512 sequences, 524,288 tokens per step) and a corresponding 2× increase in learning rate. The result was immediate: in just **59,600 steps**, the model improved by more than it had in the last *300,000 steps* of Attempt 3.
+| Step | Val loss | Perplexity |
+| --- | --- | --- |
+| 1,000 | 6.10 | ~445 |
+| 2,000 | 5.36 | ~213 |
+| 5,000 | ~4.15 | ~63 |
+| 10,000 | ~3.92 | ~50 |
 
-Larger batches give better gradient estimates. Better estimates mean more reliable steps forward. The model stops "wandering" and starts actually converging.
+### The Long Crawl (Steps 10,000–379,000)
+
+After the initial drop, progress slowed to a crawl. The model spent the next **369,000 steps** — over 97% of the run — inching from val loss ~3.92 down to ~3.30. Each additional 4,000 steps bought only ~0.2 nats of improvement, with high variance masking real progress.
+
+Average val loss by phase (5k-step windows):
+
+| Step range | Avg val loss | Change |
+| --- | --- | --- |
+| 5k–30k | ~3.65 | −0.50 |
+| 30k–100k | ~3.56 | −0.09 |
+| 100k–200k | ~3.47 | −0.09 |
+| 200k–300k | ~3.40 | −0.07 |
+| 300k–379k | **~3.32** | −0.08 |
+
+**Why so slow?** The culprit was the small effective batch size. With only 32 sequences per step (32,768 tokens), each gradient estimate was noisy. The model was learning, but each update step was less reliable — two steps forward, one step back. The val loss curve had high variance, and the model spent enormous compute essentially spinning in place.
+
+The best val loss reached was **3.1878** at step 376,000. This checkpoint was saved and became the starting point for Attempt 4.
+
+### Scaling Up: Attempt 4
+
+Resuming from step 379,000 with two key changes:
+
+| Setting | Attempt 3 | Attempt 4 | Change |
+| --- | --- | --- | --- |
+| Learning rate | 3e-4 | **6e-4** | 2× |
+| Effective batch size | 32 | **512** | 16× |
+| Tokens per step | 32,768 | **524,288** | 16× |
+| Accumulation steps | 2 | 32 | 16× |
+
+The LR increase follows the linear scaling rule: doubling the batch size warrants doubling the LR. Staying at 2× LR (rather than the full 16×) was the conservative choice for a mid-training resume.
+
+The effect was visible within the first few thousand steps. The val loss, which had been hovering around 3.10–3.30 for hundreds of thousands of steps, began falling cleanly:
+
+| Step | Val loss | Perplexity |
+| --- | --- | --- |
+| 379,100 (start) | 3.09 | ~22.0 |
+| 395,000 | 2.95 | ~19.1 |
+| 410,000 | 2.95 | ~19.1 |
+| 420,000 | 2.93 | ~18.8 |
+| 430,000 | **2.88** | ~17.8 |
+| 436,500 | **2.8368** | **17.1** |
+
+In just **59,600 steps**, the model improved by ~0.26 nats — more than Attempt 3 achieved in its final *300,000 steps*. Larger batches give better gradient estimates. Better estimates mean more reliable steps forward. The model stops "wandering" and starts actually converging.
+
+Training was stopped at step **438,700**, having crossed the nanoGPT GPT-2 small benchmark (val loss ~2.85):
+
+| Metric | Value | Step |
+| --- | --- | --- |
+| Best validation loss | **2.8368** | 436,500 |
+| Best training loss | **2.6744** | 436,700 |
+| Final val loss (last point) | 2.9–3.07 (noisy) | 438,700 |
+| Best perplexity | **~17.1** | 436,500 |
+
+The train/val gap remained narrow (~0.05–0.10) throughout, confirming no overfitting.
 
 ---
 
@@ -239,9 +329,19 @@ Final best validation loss: 2.8368 at step 436,500 (~17.1 perplexity)
 
 The canonical benchmark is Karpathy's nanoGPT reproduction of GPT-2 small (124M parameters), which reaches ~val loss 2.85 on OpenWebText. TinyGPT (163M parameters, trained on fineweb-edu) reached **2.8368** — effectively matching, and marginally beating, the reference.
 
-Perplexity of 17.1 means: on average, the model is as "surprised" as if it had to choose between 17 equally likely options at each step. For reference, a random model over 50,000 tokens would have perplexity 50,000. A perfect model would have perplexity 1.
+Two important caveats on that comparison:
+1. TinyGPT has **163M parameters vs. 124M** for GPT-2 small — a ~31% larger model, so a slight edge is expected.
+2. The datasets differ: fineweb-edu is a filtered, higher-quality educational subset of Common Crawl, while OpenWebText mirrors Reddit-curated web text. Educational text is more structured and predictable, which typically yields lower perplexity, so the numbers aren't directly comparable.
 
-The model had seen ~43.6 billion tokens total — roughly 13× what the Chinchilla scaling laws suggest is optimal for a 163M parameter model. This "over-training" is intentional: a smaller, over-trained model is cheaper to run at inference time than a larger model trained to the compute-optimal point, while achieving similar quality.
+Perplexity of 17.1 means: on average, the model is as "surprised" as if it had to choose between 17 equally likely options at each step. A random model over 50,000 tokens would have perplexity 50,000. A perfect model would have perplexity 1.
+
+| Phase | Steps | Tokens/step | Total tokens |
+| --- | --- | --- | --- |
+| Attempt 3 | 379,400 | 32,768 | ~12.4B |
+| Attempt 4 | 59,600 | 524,288 | ~31.2B |
+| **Total** | **439,000** | — | **~43.6B** |
+
+The model had seen ~43.6 billion tokens total — roughly 13× what the Chinchilla scaling laws suggest is optimal for a 163M parameter model (163M × 20 ≈ 3.3B tokens). This "over-training" is intentional: a smaller, over-trained model is cheaper to run at inference time than a larger model trained to the compute-optimal point, while achieving similar quality.
 
 ---
 
@@ -285,6 +385,18 @@ Underneath the translation task is a more general problem: *learn a representati
 These contextual representations turn out to be useful for far more than translation. They're useful for any task that involves understanding language. Text generation is just decoding those representations one step at a time. The architecture didn't contain anything translation-specific; it contained something more fundamental.
 
 The community discovered this empirically between 2018 and 2020, with BERT, GPT, and GPT-2 showing that the same architecture, slightly modified, worked for classification, generation, question answering, summarization — basically everything. At that point, the question shifted from "why does it work for translation" to "is there a task where it *doesn't* work?" And the answer, increasingly, has been: not many.
+
+---
+
+## Appendix: If Training Had Continued
+
+At stop time (step 438,700), training was **73% through the cosine decay schedule** (target: 600,000 steps). The learning rate had decayed from its peak of 6e-4 to approximately **~1.0×10⁻⁴**, with the schedule still heading down to 6e-5 by step 600k.
+
+The model was still actively learning — new val loss lows were being set in the final 10k steps before the run ended. Had training continued to completion:
+
+- The cosine tail (steps 438k→600k) would have provided ~161k more steps of refined learning at slowly decreasing LR.
+- Projected final val loss: approximately **2.78–2.83**.
+- Estimated final perplexity: **~16.1–16.8**.
 
 ---
 
