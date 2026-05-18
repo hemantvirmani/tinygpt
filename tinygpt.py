@@ -43,7 +43,9 @@ G_SPLIT_RATIO = 0.8
 USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = True
 BINARY_DATASET_FILENAME = "dataset.bin"
-CHECKPOINT_FILE = "tinygpt_latest.pt"
+CHECKPOINT_FILE = "tinygpt_weights.pt"
+#CHECKPOINT_FILE = "tinygpt_latest.pt"
+
 # Streaming dataset config (used when G_USE_STREAMING=True)
 G_USE_STREAMING = True
 STREAMING_HF_DATASET = "HuggingFaceFW/fineweb-edu"
@@ -465,7 +467,7 @@ class TinyGPT(nn.Module):
 
 def _maybe_load_checkpoint(
     model: nn.Module,
-    optimizer: torch.optim.Optimizer,
+    optimizer: torch.optim.Optimizer | None = None,
     scheduler: Any = None,
     resume_path: str | None = CHECKPOINT_FILE,
 ) -> int:
@@ -477,12 +479,25 @@ def _maybe_load_checkpoint(
         return 0
 
     ckpt = torch.load(resume_path, map_location=G_DEVICE, weights_only=False)
-    model.load_state_dict(ckpt["model_state"])
-    optimizer.load_state_dict(ckpt["optimizer_state"])
-    if scheduler is not None and ckpt.get("scheduler_state") is not None:
-        scheduler.load_state_dict(ckpt["scheduler_state"])
-    start_step = int(ckpt.get("step", 0)) + 1
-    print(f"Resumed from {resume_path} at step {start_step}")
+    # Support both full training checkpoints (dict with "model_state" key)
+    # and bare state dicts saved for inference-only use.
+    if isinstance(ckpt, dict) and "model_state" in ckpt:
+        state_dict = ckpt["model_state"]
+        if optimizer is not None:
+            optimizer.load_state_dict(ckpt["optimizer_state"])
+        if scheduler is not None and ckpt.get("scheduler_state") is not None:
+            scheduler.load_state_dict(ckpt["scheduler_state"])
+        start_step = int(ckpt.get("step", 0)) + 1
+        print(f"Resumed from {resume_path} at step {start_step}")
+    else:
+        state_dict = ckpt
+        start_step = 0
+        print(f"Loaded weights from {resume_path}")
+    # Checkpoints saved from torch.compile'd models have an "_orig_mod." prefix on all keys.
+    # Strip it so weights load into either compiled or non-compiled models without error.
+    if any(k.startswith("_orig_mod.") for k in state_dict):
+        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     return start_step
 
 def _maybe_save_checkpoint(
@@ -540,14 +555,28 @@ def _ensure_dataset():
         shutil.copyfile(file_path, BINARY_DATASET_FILENAME)
     return BINARY_DATASET_FILENAME
 
+def save_weights(output_path: str, checkpoint_path: str | None = CHECKPOINT_FILE) -> None:
+    """Extract and save only model weights from a training checkpoint.
+
+    Strips optimizer/scheduler state and any torch.compile key prefixes.
+    The resulting file is ~3x smaller and loads instantly for inference.
+    Runs fine on CPU — no GPU needed.
+    """
+    src = checkpoint_path or CHECKPOINT_FILE
+    ckpt = torch.load(src, map_location="cpu", weights_only=False)
+    state_dict = ckpt["model_state"] if isinstance(ckpt, dict) and "model_state" in ckpt else ckpt
+    if any(k.startswith("_orig_mod.") for k in state_dict):
+        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    torch.save(state_dict, output_path)
+    size_mb = os.path.getsize(output_path) / 1024 / 1024
+    print(f"Saved weights to {output_path} ({size_mb:.0f} MB)")
+
 def load_model_for_inference() -> TinyGPT:
     """Load model weights from checkpoint and return an eval-ready model."""
-    file_path = _ensure_dataset()
-    state = build_state(dataset_path=file_path)
+    tokenizer = tiktoken.get_encoding("gpt2")
+    state = State(tokenizer=tokenizer, train_data=None, val_data=None, vocab_size=tokenizer.n_vocab)
     model = TinyGPT(state).to(G_DEVICE)
-    if G_DEVICE == "cuda": model = torch.compile(model)
-    optimizer, _ = model._setup_training()
-    _maybe_load_checkpoint(model, optimizer)
+    _maybe_load_checkpoint(model)
     model.eval()
     return model
 
@@ -555,7 +584,6 @@ def main():
     parser = argparse.ArgumentParser(description="Train TinyGPT or run inference.")
     parser.add_argument("--infer", type=str, help="Run inference with the given prompt.")
     args, _ = parser.parse_known_args()
-
 
     if args.infer:
         model = load_model_for_inference()
@@ -574,3 +602,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+#save_weights("gpt2-training-artifacts/tinygpt_weights.pt")
+# or from a different checkpoint:
+#save_weights("tinygpt_weights.pt", checkpoint_path="/path/to/other.pt")
