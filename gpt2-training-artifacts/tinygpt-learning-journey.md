@@ -33,7 +33,7 @@ The repo also includes **FemtoGPT**, a ~10M parameter character-level model on S
 
 2. **Batch size is a first-class hyperparameter.** Phase 1 spent 379k steps with batch=32 and reached val loss 3.19. Phase 2 spent 60k steps with batch=512 and surpassed that by 0.35 nats. With a noisy gradient, more steps doesn't necessarily mean more learning — each Phase 2 step processed 16× more tokens and produced 16× more reliable gradient estimates.
 
-3. **The model stops improving when training stops, not before.** At the point training was halted (step 438,700), new val loss lows were still being set. There was no plateau, no diminishing returns. A continuation to 600k steps would have improved the model further.
+3. **Given sufficient data and the right architecture, training loss keeps falling until you pull the plug.** At the point training was halted (step 438,700), new val loss lows were still being set. There was no plateau, no diminishing returns — the model stops improving when *you* stop, not before. A continuation to 600k steps would have improved the model further.
 
 4. **Checkpointing is infrastructure, not an afterthought.** Saving the full training state — model weights, optimizer state, scheduler state, step count — is what makes long multi-week runs recoverable. A scheduler resume bug discovered mid-run was a real example of what happens when state is partially saved.
 
@@ -50,7 +50,7 @@ The repo also includes **FemtoGPT**, a ~10M parameter character-level model on S
 | Attempt | Steps | Dataset | Eff. Batch | LR | Best Val Loss | What stopped it |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | ~60K | Offline curated corpus | 16 | 1e-5 | ~3.64 | Dataset exhausted; LR too low |
-| 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Run hit 100K step limit; still declining |
+| 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Slow decline · convergence stalled |
 | 3 | 379,400 | FineWeb-Edu 100BT, streaming | 32 | 3e-4 | **3.1878** (step 376K) | Gradient noise from small batch |
 | 4 | 59,600 | FineWeb-Edu 100BT, streaming | 512 | 6e-4 | **2.8368** (step 436.5K) | Matched benchmark; training stopped |
 
