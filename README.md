@@ -14,7 +14,7 @@ TinyGPT saves a checkpoint every 1000 steps.
 
 The TinyGPT PyTorch-native model file is hosted on Hugging Face: [hemantvirmani/tinyGPT](https://huggingface.co/hemantvirmani/tinyGPT/).
 
-[infer_test.py](infer_test.py) loads the PyTorch-native model with `tinygpt.load_model_for_inference()` and runs the prompt suite used for the sample generations.
+[infer_pytorch.py](infer_pytorch.py) loads the PyTorch-native model with `tinygpt.load_model_for_inference()` and runs the prompt suite used for the sample generations.
 
 - [output1.txt](output1.txt) contains sample outputs from PyTorch-native inference with `temperature=1.0` and `max_tokens=500`.
 - [output2.txt](output2.txt) contains the better sample outputs from PyTorch-native inference with `temperature=0.7` and `max_tokens=500`.
