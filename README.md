@@ -10,6 +10,17 @@ We start with a minimal, readable model in `femtogpt.py` (~10M parameter model) 
 
 TinyGPT saves a checkpoint every 1000 steps.
 
+## Inference and Hosted Model
+
+The TinyGPT PyTorch-native model file is hosted on Hugging Face: [hemantvirmani/tinyGPT](https://huggingface.co/hemantvirmani/tinyGPT/).
+
+[infer_test.py](infer_test.py) loads the PyTorch-native model with `tinygpt.load_model_for_inference()` and runs the prompt suite used for the sample generations.
+
+- [output1.txt](output1.txt) contains sample outputs from PyTorch-native inference with `temperature=1.0` and `max_tokens=500`.
+- [output2.txt](output2.txt) contains the better sample outputs from PyTorch-native inference with `temperature=0.7` and `max_tokens=500`.
+
+Temperature controls sampling randomness: lower values usually make generations more conservative and coherent, while higher values add variety but can drift more.
+
 ## Reproducibility
 
 A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier to compare.
