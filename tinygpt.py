@@ -443,7 +443,7 @@ class TinyGPT(nn.Module):
         _plot_losses(steps, train_losses, val_losses)
 
     # Text Generation Function
-    def generate_text(self, start_text, max_tokens=50, temperature=1.0, top_k=None):
+    def generate_text(self, start_text, max_tokens=50, temperature=0.7, top_k=None):
         self.eval()
 
         tokens = self.state.tokenizer.encode(start_text)
