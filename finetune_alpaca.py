@@ -165,7 +165,7 @@ print(f"Train: {len(train_data)} | Val: {len(val_data)}")
 print("\nFormatted example (decoded):")
 print(enc.decode(train_data[0]))
 
-def _get_batch(split):
+def _get_batch_finetuning(split):
     """Sample a random Alpaca batch, pad to max length, return (x, y, mask)."""
     data = train_data if split == "train" else val_data
     batch = random.sample(data, BATCH_SIZE)
@@ -253,7 +253,7 @@ def train_loop(model):
         micro_step_loss = 0.0
 
         for _ in range(accumulation_steps):
-            x, y, mask = _get_batch(split="train")
+            x, y, mask = _get_batch_finetuning(split="train")
             if device == "cuda" and USE_BF16:
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
                     loss = tinygpt.compute_loss(model, x, y, mask)
@@ -273,7 +273,7 @@ def train_loop(model):
         # 3. Evaluate and checkpoint if best
         if (step + 1) % EVAL_STEPS == 0 or step == start_step:
             val_loss_val = tinygpt.evaluate_loss(
-                model, lambda: _get_batch("val"), EVAL_ITERATIONS, device, USE_BF16,
+                model, lambda: _get_batch_finetuning("val"), EVAL_ITERATIONS, device, USE_BF16,
             ).item()
             steps.append(step + 1)
             train_losses.append(avg_train_loss)
