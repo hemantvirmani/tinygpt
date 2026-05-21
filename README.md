@@ -69,28 +69,34 @@ A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier
 - Fine Tuning [DONE]
 - RLHF
 
-## Retraining Notes
+## Retraining Notes (Next Planned Run — Not Yet Executed)
 
-If pretraining TinyGPT from scratch again, the defaults in `Hyperparameters` are already calibrated — no changes needed. Key values to know:
+The published model at [hemantvirmani/tinyGPT](https://huggingface.co/hemantvirmani/tinyGPT) was pretrained on **FineWeb-Edu `sample-100BT`** (see Results table above). The configuration below is for the **next planned pretraining run** on FineWeb base `sample-10BT`. It has not been run yet.
 
-- **Learning rate:** `lr=6e-4` (peak). Validated in attempt 4 with `effective_batch_size=512`. If you change the batch size, scale LR proportionally (linear scaling rule: 2× batch → 2× LR). The 4000-step warmup handles fresh-start gradient instability.
-- **Effective batch size:** `512` sequences (`effective_batch_size=512`, split across accumulation steps). Increasing this was the single biggest lever — attempt 4 showed 16× batch improvement in 60K steps outpaced attempt 3's final 300K steps.
-- **Micro-batch size (`batch_size`):** `16` — a GPU memory limit, not a training hyperparameter. Calibrated for an RTX 4090 (24 GB VRAM). A better GPU (e.g. RTX 5090) can double this to `batch_size=32`, halving accumulation steps from 32 → 16 with identical training dynamics. Formula: `accumulation_steps = effective_batch_size / batch_size`. See GPU comparison table below.
-- **Max steps:** `max_iters=30_000`, `warmup_iters=1_800` (6% warmup). At `effective_batch_size=512`, each step processes 512 × 1,024 = 524K tokens. 30K steps = **15.7B tokens = 1.57 passes** through the FineWeb 10BT dataset — within the safe zone (Muennighoff et al. 2023: ≤2 passes = minimal degradation vs. fresh data).
-- **Dataset:** FineWeb base `sample-10BT` (`STREAMING_HF_DATASET="HuggingFaceFW/fineweb"`, `STREAMING_HF_SUBSET="sample-10BT"`). More diverse than FineWeb-Edu (not education-filtered), better general-purpose base for instruction fine-tuning. Do not use FineWeb-Edu `sample-10BT` — that was attempt 2's dataset, hit a ceiling at val loss 3.34.
+Only the settings that differ from the current defaults are listed:
 
-### Why 30K steps is enough — comparison with nanoGPT
+- **Dataset:** Switch to FineWeb base — more diverse, not education-filtered, better general-purpose base for instruction fine-tuning.
 
-nanoGPT GPT-2 small trained on OpenWebText and reached val loss **2.85**. TinyGPT should exceed this:
+  ```python
+  STREAMING_HF_DATASET = "HuggingFaceFW/fineweb"
+  STREAMING_HF_SUBSET  = "sample-10BT"
+  ```
 
-| Model | Params | Tokens trained | Tokens / param |
+- **Max steps:** `max_iters=30_000`, `warmup_iters=1_800` (6% warmup). 30K steps × 524K tokens/step = **15.7B tokens = 1.57 passes** through the 10BT dataset. Muennighoff et al. 2023: ≤2 passes causes minimal degradation vs. fresh data.
+- **Micro-batch size:** `batch_size=16` (RTX 4090) or `batch_size=32` (RTX 5090). This is a GPU memory setting, not a training hyperparameter — `effective_batch_size=512` stays fixed. Doubling the micro-batch halves accumulation steps (32 → 16) with identical training dynamics. See GPU table below.
+
+### Why 30K steps is the right budget
+
+nanoGPT GPT-2 small trained on OpenWebText and reached val loss **2.85**. TinyGPT on FineWeb base should exceed this:
+
+| Model | Params | Tokens | Tokens / param |
 | --- | --- | --- | --- |
 | nanoGPT GPT-2 small | 124M | 9B | 72.6 |
-| TinyGPT (this run) | 163M | 15.7B | **96.3** |
+| TinyGPT (next run) | 163M | 15.7B | **96.3** |
 
-TinyGPT gets **33% more tokens per parameter** than nanoGPT did. Size-adjusted equivalent: nanoGPT's 9B scales to 11.8B for a 163M model; TinyGPT gets 15.7B — **1.33× more**. Combined with a better-filtered dataset, val loss should beat 2.85. Note: val loss numbers aren't directly comparable (different datasets), but the training budget is unambiguously stronger.
+TinyGPT gets **33% more tokens per parameter** than nanoGPT — 1.33× more when adjusted for model size. Val loss numbers won't be directly comparable (different datasets), but the training budget is unambiguously stronger.
 
-### GPU options for this run
+### GPU options (RunPod community pricing)
 
 | GPU | `batch_size` | Accum steps | Est. hours | Cost/hr | Total cost |
 | --- | --- | --- | --- | --- | --- |
@@ -98,7 +104,7 @@ TinyGPT gets **33% more tokens per parameter** than nanoGPT did. Size-adjusted e
 | RTX 5090 | 16 | 32 | ~28 hrs | $0.99 | **~$28** |
 | RTX 5090 | 32 | 16 | ~26 hrs | $0.99 | **~$26** |
 
-RTX 5090 with `batch_size=32` is both faster and cheaper — clear choice if available on RunPod. Only change needed: `batch_size=32` in `Hyperparameters`.
+RTX 5090 with `batch_size=32` is both faster and cheaper — clear choice if available.
 
 ## Dataset
 
@@ -113,6 +119,8 @@ RTX 5090 with `batch_size=32` is both faster and cheaper — clear choice if ava
 Tokenizer: `tiktoken` with GPT-2 encoding.
 
 ## Results
+
+> All results below were produced with code at tag **[v1.0.0](https://github.com/hemantvirmani/tinygpt/tree/v1.0.0)**. The current `main` branch reflects the next planned pretraining configuration (FineWeb base 10BT, 30K steps) — see [Retraining Notes](#retraining-notes-next-planned-run--not-yet-executed).
 
 ### FemtoGPT (~10M params, 6 layers, 6 heads, embd=384, ctx=256, char-level tokenizer)
 
