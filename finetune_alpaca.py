@@ -336,21 +336,6 @@ def _maybe_save_checkpoint(model, optimizer, scheduler=None, step=0, vocab_size=
     return val_loss, new_path
 
 
-def _plot_losses(steps, train_losses, val_losses):
-    if not steps:
-        return
-    output_path = f"{MODEL_DIR}/finetune_loss_curve.png"
-    plt.figure(figsize=(10, 6))
-    plt.plot(steps, train_losses, label="train")
-    plt.plot(steps, val_losses, label="val")
-    plt.xlabel("step")
-    plt.ylabel("loss")
-    plt.title("Fine-Tuning Loss — TinyGPT on Alpaca Cleaned")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150)
-    plt.show()
-    print(f"Loss curve saved to {output_path}")
 
 # =============================================================================
 # Step 9: Training Loop
@@ -412,24 +397,21 @@ def train_loop(model):
             )
 
     print(f"\nBest val loss: {best_val_loss:.4f} — checkpoint: {best_ckpt_path}")
-    _plot_losses(steps, train_losses, val_losses)
+    tinygpt._plot_losses(
+        steps, train_losses, val_losses,
+        title="Fine-Tuning Loss — TinyGPT on Alpaca Cleaned",
+        output_path=f"{MODEL_DIR}/finetune_loss_curve.png",
+        dpi=150,
+    )
     return steps, train_losses, val_losses
 
 
 steps, train_losses, val_losses = train_loop(model)
 print("\nTraining complete!")
 
-# =============================================================================
-# Step 10: Plot Loss Curves
-#
-# The training loop already calls _plot_losses at the end.
-# Re-run this line if you want to regenerate the plot without retraining.
-# =============================================================================
-
-_plot_losses(steps, train_losses, val_losses)
 
 # =============================================================================
-# Step 11: Test AFTER Fine-Tuning
+# Step 10: Test AFTER Fine-Tuning
 #
 # Same prompts as baseline. Compare the delta — that's your intuition moment.
 # =============================================================================
@@ -437,7 +419,7 @@ _plot_losses(steps, train_losses, val_losses)
 test_model(model, test_prompts, label="AFTER Instruction Fine-Tuning")
 
 # =============================================================================
-# Step 12: Save Final Weights
+# Step 11: Save Final Weights
 #
 # Load the best checkpoint and extract inference-only weights (strips optimizer
 # and scheduler state). The resulting file is what you upload to Hugging Face

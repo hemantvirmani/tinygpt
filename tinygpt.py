@@ -526,22 +526,24 @@ def _maybe_save_checkpoint(
     torch.save(payload, resume_path)
     print(f"Saved checkpoint: {resume_path}")
 
-def _plot_losses(steps, train_losses, val_losses):
+def _plot_losses(steps, train_losses, val_losses,
+                 title: str = "Training vs Validation Loss",
+                 output_path: str = "loss_curve.png",
+                 dpi: int = 100):
     if not steps:
         return
-
-    output_path = "loss_curve.png"
     plt.figure(figsize=(10, 6))
     plt.plot(steps, train_losses, label="train")
     plt.plot(steps, val_losses, label="val")
     plt.xlabel("step")
     plt.ylabel("loss")
-    plt.title("Training vs Validation Loss")
+    plt.title(title)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(output_path)
+    plt.savefig(output_path, dpi=dpi)
     plt.show()
     plt.close()
+    print(f"Loss curve saved to {output_path}")
 
 # Code for runing inference
 def _ensure_dataset():
