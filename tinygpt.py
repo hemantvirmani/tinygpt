@@ -20,32 +20,38 @@ import numpy as np
 # Enable TF32 on matmuls (standard for Ampere+)
 torch.set_float32_matmul_precision('high')
 
-#Hyperparameters
-G_BATCH_SIZE = 16
+# --- Architecture ---
 G_BLOCK_SIZE = 1024
-G_N_EMBD = 768
-G_MAX_ITERS = 600000
-G_LR = 6e-4                    # scaled up from 3e-4 to match larger effective batch
-G_N_LAYERS = 12
-G_WEIGHT_DECAY = 0.1
-G_GRAD_CLIP = 1.0
-G_WARMPUP_ITERS = 4000
-G_DROPOUT_PROB = 0.0
-G_N_HEAD = 12
-G_EFFECTIVE_BATCH_SIZE = 512   # increased from 32; accumulation = 512/G_BATCH_SIZE
-G_EVAL_ITERATIONS = 50         # increased from 20 for more stable val loss estimate
-G_EVAL_STEPS      = 100        # evaluate every N training steps
+G_N_EMBD    = 768
+G_N_LAYERS  = 12
+G_N_HEAD    = 12
+
+# --- Hardware / Runtime ---
+G_DROPOUT_PROB = 0.0   # mutated by callers (e.g. fine-tuning sets 0.1)
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu")
-#------Static Constants------#
+
+# --- Infrastructure / Data ---
 G_SEED = 1947
 G_SPLIT_RATIO = 0.8
 USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = True
 BINARY_DATASET_FILENAME = "dataset.bin"
 CHECKPOINT_FILE = "tinygpt_pretrained_weights.pt"
-#CHECKPOINT_FILE = "tinygpt_latest.pt"
+
+
+@dataclass
+class Hyperparameters:
+    lr:                   float = 6e-4
+    weight_decay:         float = 0.1
+    grad_clip:            float = 1.0
+    warmup_iters:         int   = 4000
+    max_iters:            int   = 600_000
+    batch_size:           int   = 16
+    effective_batch_size: int   = 512    # accumulation = effective_batch_size / batch_size
+    eval_steps:           int   = 100    # evaluate every N training steps
+    eval_iterations:      int   = 50     # batches averaged during validation
 
 # Streaming dataset config (used when G_USE_STREAMING=True)
 G_USE_STREAMING = True
@@ -115,7 +121,9 @@ class StreamingTokenDataset(torch.utils.data.IterableDataset):
                 buffer = buffer[self.block_size + 1 :]
 
 
-def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str | None = BINARY_DATASET_FILENAME) -> State:
+def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str | None = BINARY_DATASET_FILENAME, batch_size: int | None = None) -> State:
+    if batch_size is None:
+        batch_size = Hyperparameters().batch_size
     tokenizer = tiktoken.get_encoding("gpt2")
     vocab_size = tokenizer.n_vocab
 
@@ -124,8 +132,8 @@ def build_state(split_ratio: float = G_SPLIT_RATIO, dataset_path: str | None = B
         train_ds = StreamingTokenDataset(split="train", block_size=G_BLOCK_SIZE)
         val_ds   = StreamingTokenDataset(split="val",   block_size=G_BLOCK_SIZE)
         # num_workers=0 avoids multiprocessing issues with HuggingFace streaming on Windows
-        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=G_BATCH_SIZE, num_workers=0)
-        val_loader   = torch.utils.data.DataLoader(val_ds,   batch_size=G_BATCH_SIZE, num_workers=0)
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, num_workers=0)
+        val_loader   = torch.utils.data.DataLoader(val_ds,   batch_size=batch_size, num_workers=0)
         return State(
             tokenizer=tokenizer,
             train_data=None,
@@ -348,10 +356,11 @@ def evaluate_loss(
 
 #Lets Create the GPT model
 class TinyGPT(nn.Module):
-    def __init__(self, state: State):
+    def __init__(self, state: State, hparams: Hyperparameters | None = None):
         super().__init__()
 
         self.state = state
+        self.hparams = hparams or Hyperparameters()
         self.token_embedding_table = nn.Embedding(state.vocab_size, G_N_EMBD)
         self.position_embedding_table = nn.Embedding(G_BLOCK_SIZE, G_N_EMBD)
 
@@ -393,7 +402,7 @@ class TinyGPT(nn.Module):
             return x.to(G_DEVICE), y.to(G_DEVICE)
 
         data = self.state.train_data if split == "train" else self.state.val_data
-        ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (G_BATCH_SIZE,))
+        ix = torch.randint(len(data) - G_BLOCK_SIZE - 1, (self.hparams.batch_size,))
 
         # Convert the full batch slice in one go, then reshape to reduce overhead.
         ix_np = ix.cpu().numpy()
@@ -405,16 +414,16 @@ class TinyGPT(nn.Module):
         return x.to(G_DEVICE), y.to(G_DEVICE)
 
     def train_loop(self) -> None:
+        hp = self.hparams
         optimizer, scheduler = build_optimizer_scheduler(
-            self, G_WEIGHT_DECAY, G_LR, G_DEVICE, G_WARMPUP_ITERS, G_MAX_ITERS)
+            self, hp.weight_decay, hp.lr, G_DEVICE, hp.warmup_iters, hp.max_iters)
 
-        # Target an effective batch size of 32 to reduce "waviness"
-        # Since G_BATCH_SIZE is 4, we accumulate for 8 steps (4 * 8 = 32)
-        assert G_EFFECTIVE_BATCH_SIZE % G_BATCH_SIZE == 0, "G_EFFECTIVE_BATCH_SIZE must be divisible by G_BATCH_SIZE"
-        accumulation_steps = G_EFFECTIVE_BATCH_SIZE // G_BATCH_SIZE 
+        assert hp.effective_batch_size % hp.batch_size == 0, \
+            "effective_batch_size must be divisible by batch_size"
+        accumulation_steps = hp.effective_batch_size // hp.batch_size
 
         print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
-        print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
+        print(f"Effective batch size: {hp.effective_batch_size} (via {accumulation_steps} accumulation steps)")
 
         start_step, best_val_loss = maybe_load_checkpoint(
             self, optimizer, scheduler,
@@ -423,7 +432,7 @@ class TinyGPT(nn.Module):
         steps = []
         train_losses = []
         val_losses = []
-        for step in range(start_step, G_MAX_ITERS):
+        for step in range(start_step, hp.max_iters):
             # 1. Accumulate gradients over multiple micro-batches
             optimizer.zero_grad(set_to_none=True)
             micro_step_loss = 0.0
@@ -443,16 +452,16 @@ class TinyGPT(nn.Module):
             avg_train_loss = micro_step_loss / accumulation_steps
 
             # 2. Clip and update weights
-            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=G_GRAD_CLIP)
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=hp.grad_clip)
             optimizer.step()
             scheduler.step()
 
             # 3. Logging and Checkpointing
-            if (step + 1) % G_EVAL_STEPS == 0 or step == start_step:
+            if (step + 1) % hp.eval_steps == 0 or step == start_step:
                 val_loss = evaluate_loss(
                     self,
                     lambda: (*self._get_batch("val"), None),
-                    G_EVAL_ITERATIONS, G_DEVICE, USE_BF16,
+                    hp.eval_iterations, G_DEVICE, USE_BF16,
                 )
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
@@ -562,8 +571,8 @@ def maybe_save_checkpoint(
     return val_loss
 
 def plot_losses(steps, train_losses, val_losses,
-                 title: str = "Training vs Validation Loss",
-                 output_path: str = "loss_curve.png",
+                 title: str = "Training vs Validation Loss — Pretraining",
+                 output_path: str = "pretraining_loss_curve.png",
                  dpi: int = 100):
     if not steps:
         return
@@ -631,8 +640,9 @@ def main():
 
     file_path = _ensure_dataset() if not G_USE_STREAMING else None
     # build the state and train the model
-    state = build_state(dataset_path=file_path)
-    model = TinyGPT(state).to(G_DEVICE)
+    hparams = Hyperparameters()
+    state = build_state(dataset_path=file_path, batch_size=hparams.batch_size)
+    model = TinyGPT(state, hparams=hparams).to(G_DEVICE)
     if G_DEVICE == "cuda": model = torch.compile(model)
     model.train_loop()
 
