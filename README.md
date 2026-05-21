@@ -43,7 +43,7 @@ A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier
 
 ## TODO (Living List, not in order of implementation)
 
-- Fine Tuning
+- Fine Tuning [DONE]
 - RLHF
 
 ## Dataset
@@ -79,10 +79,28 @@ Tokenizer: `tiktoken` with GPT-2 encoding.
 
 **nanoGPT GPT-2 small reference** (124M params, OpenWebText): val loss ~2.85. TinyGPT at 163M params on FineWeb-Edu reached **2.8368** — effectively matching the benchmark.
 
+### Instruction Fine-Tuning — Alpaca Cleaned (52K examples)
+
+Full fine-tune of the pretrained TinyGPT weights on the [yahma/alpaca-cleaned](https://huggingface.co/datasets/yahma/alpaca-cleaned) dataset using a custom PyTorch training loop. Prompt template: `### Instruction / ### Input (optional) / ### Response`. Loss masked on padding tokens.
+
+| Setting | Value |
+| --- | --- |
+| Base model | TinyGPT pretrained (val loss 2.8368) |
+| Dataset | Alpaca Cleaned (52K examples) |
+| Dropout | 0.1 |
+| Learning rate | 1e-4 (warmup + cosine decay) |
+| Effective batch size | 64 (4 micro-batch × 16 accumulation steps) |
+| Best val loss | **1.8405** (step 3,600 of 5,000) |
+| Final weights | `tinygpt_alpaca_weights.pt` |
+
+**Key lesson:** Dropout = 0.1 is critical at fine-tuning time — without it, the train/val gap exceeded 0.80 within 2,000 steps. With it, the gap stayed at 0.40–0.50. Format acquisition is fast (first 100 steps); factual accuracy is limited by the 163M parameter capacity.
+
+The notebook and raw fine-tuning outputs are in [`gpt2-training-artifacts/finetuning_outputs_alpaca_dataset.md`](gpt2-training-artifacts/finetuning_outputs_alpaca_dataset.md).
+
 ## Training Story & Learning Journey
 
-- [Training Story](gpt2-training-artifacts/tinygpt-training-story.md) — detailed account of all four attempts, loss curve analysis, and final results.
-- [Learning Journey](gpt2-training-artifacts/tinygpt-learning-journey.md) — how the codebase evolved commit-by-commit, what each phase taught the model, and open questions about Transformer architecture.
+- [Training Story](gpt2-training-artifacts/tinygpt-training-story.md) — detailed account of all four pretraining attempts, loss curve analysis, and final results.
+- [Learning Journey](gpt2-training-artifacts/tinygpt-learning-journey.md) — how the codebase evolved commit-by-commit, what each phase taught the model, instruction fine-tuning on Alpaca Cleaned, and open questions about Transformer architecture.
 
 ## Learning Roadmap
 

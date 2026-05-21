@@ -23,6 +23,6 @@ gpt2-training-artifacts/runpodctl-windows-amd64/
 
 
 gpt2-training-artifacts/.claude/settings.local.json
-tinygpt_weights.pt
-tinygpt_hf/
+
+gpt2-training-artifacts/tinygpt_pretrained_model_hf/
 
