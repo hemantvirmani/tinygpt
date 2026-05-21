@@ -75,9 +75,30 @@ If pretraining TinyGPT from scratch again, the defaults in `Hyperparameters` are
 
 - **Learning rate:** `lr=6e-4` (peak). Validated in attempt 4 with `effective_batch_size=512`. If you change the batch size, scale LR proportionally (linear scaling rule: 2× batch → 2× LR). The 4000-step warmup handles fresh-start gradient instability.
 - **Effective batch size:** `512` sequences (`effective_batch_size=512`, split across accumulation steps). Increasing this was the single biggest lever — attempt 4 showed 16× batch improvement in 60K steps outpaced attempt 3's final 300K steps.
-- **Micro-batch size (`batch_size`):** `16` — a GPU memory limit, not a training hyperparameter. Calibrated for an RTX 4090 (24 GB VRAM) with a 163M param model at sequence length 1024. A GPU with more VRAM (e.g. RTX 5090) can use a larger micro-batch (`batch_size=32` or `64`), which reduces the accumulation steps needed to hit the same effective batch of 512 — same training curve, faster wall-clock time. Formula: `accumulation_steps = effective_batch_size / batch_size`.
-- **Max steps:** `max_iters=50_000`, `warmup_iters=2_500` (5% warmup). At `effective_batch_size=512`, each step processes 512 × 1,024 = 524K tokens. 50K steps ≈ 26B tokens — ~2.9× what nanoGPT used (9B tokens → val loss 2.85). TinyGPT is 31% larger (163M vs 124M params) so proportionally needs more data; 26B is a solid target. The old 600K was designed for `effective_batch_size=32` (16× smaller); at 512 it would mean 300B tokens and 3 full passes through the dataset.
-- **Dataset:** FineWeb-Edu `sample-100BT` streaming (`STREAMING_HF_DATASET` / `STREAMING_HF_SUBSET` globals). This is the right dataset for a like-for-like retrain. Do not downgrade to FineWeb-Edu `sample-10BT` — attempt 2 hit a hard ceiling at val loss 3.34 because that dataset was exhausted. For dataset changes (e.g. switching to base FineWeb), see `FUTURE_ENHANCEMENTS.md`.
+- **Micro-batch size (`batch_size`):** `16` — a GPU memory limit, not a training hyperparameter. Calibrated for an RTX 4090 (24 GB VRAM). A better GPU (e.g. RTX 5090) can double this to `batch_size=32`, halving accumulation steps from 32 → 16 with identical training dynamics. Formula: `accumulation_steps = effective_batch_size / batch_size`. See GPU comparison table below.
+- **Max steps:** `max_iters=30_000`, `warmup_iters=1_800` (6% warmup). At `effective_batch_size=512`, each step processes 512 × 1,024 = 524K tokens. 30K steps = **15.7B tokens = 1.57 passes** through the FineWeb 10BT dataset — within the safe zone (Muennighoff et al. 2023: ≤2 passes = minimal degradation vs. fresh data).
+- **Dataset:** FineWeb base `sample-10BT` (`STREAMING_HF_DATASET="HuggingFaceFW/fineweb"`, `STREAMING_HF_SUBSET="sample-10BT"`). More diverse than FineWeb-Edu (not education-filtered), better general-purpose base for instruction fine-tuning. Do not use FineWeb-Edu `sample-10BT` — that was attempt 2's dataset, hit a ceiling at val loss 3.34.
+
+### Why 30K steps is enough — comparison with nanoGPT
+
+nanoGPT GPT-2 small trained on OpenWebText and reached val loss **2.85**. TinyGPT should exceed this:
+
+| Model | Params | Tokens trained | Tokens / param |
+| --- | --- | --- | --- |
+| nanoGPT GPT-2 small | 124M | 9B | 72.6 |
+| TinyGPT (this run) | 163M | 15.7B | **96.3** |
+
+TinyGPT gets **33% more tokens per parameter** than nanoGPT did. Size-adjusted equivalent: nanoGPT's 9B scales to 11.8B for a 163M model; TinyGPT gets 15.7B — **1.33× more**. Combined with a better-filtered dataset, val loss should beat 2.85. Note: val loss numbers aren't directly comparable (different datasets), but the training budget is unambiguously stronger.
+
+### GPU options for this run
+
+| GPU | `batch_size` | Accum steps | Est. hours | Cost/hr | Total cost |
+| --- | --- | --- | --- | --- | --- |
+| RTX 4090 | 16 | 32 | ~62 hrs | $0.69 | **~$43** |
+| RTX 5090 | 16 | 32 | ~28 hrs | $0.99 | **~$28** |
+| RTX 5090 | 32 | 16 | ~26 hrs | $0.99 | **~$26** |
+
+RTX 5090 with `batch_size=32` is both faster and cheaper — clear choice if available on RunPod. Only change needed: `batch_size=32` in `Hyperparameters`.
 
 ## Dataset
 

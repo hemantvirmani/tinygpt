@@ -4,19 +4,18 @@ If pretraining from scratch again with free GPU access, apply these changes.
 
 ---
 
-## 1. Switch Dataset: FineWeb-Edu → FineWeb
+## 1. Switch Dataset: FineWeb-Edu → FineWeb [DONE]
 
-**File:** `tinygpt.py`
+Switched to `HuggingFaceFW/fineweb` `sample-10BT` in `tinygpt.py`. FineWeb-Edu
+biased the model toward formal educational text; FineWeb base is more diverse
+and produces a stronger general-purpose base for instruction fine-tuning.
 
-```python
-STREAMING_HF_DATASET = "HuggingFaceFW/fineweb"
-STREAMING_HF_SUBSET  = "sample-10BT"   # 10B tokens — good starting point
-```
+Training target: 1.57 passes × 10B tokens = 15.7B tokens = `max_iters=30_000`,
+`warmup_iters=1_800` (6% warmup). Kept to ≤2 passes per Muennighoff et al. 2023.
 
-FineWeb-Edu biases the model toward formal educational text. Full FineWeb is
-more diverse, better filtered, and produces a stronger general-purpose base
-for instruction fine-tuning. Start with `sample-10BT` (~what GPT-2 saw);
-only go to `sample-100BT` if GPU time is abundant.
+If running on RTX 5090: set `batch_size=32` (one-line change). Accumulation
+steps drop 32 → 16 automatically. Same training dynamics, ~26 hrs vs ~62 hrs
+on 4090, and cheaper ($26 vs $43 at RunPod community pricing).
 
 ---
 

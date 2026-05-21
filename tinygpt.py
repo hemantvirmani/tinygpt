@@ -48,8 +48,8 @@ class Hyperparameters:
     lr:                   float = 6e-4
     weight_decay:         float = 0.1
     grad_clip:            float = 1.0
-    warmup_iters:         int   = 2500
-    max_iters:            int   = 50_000   # at eff_batch=512: ~26B tokens (~2.9× nanoGPT's 9B)
+    warmup_iters:         int   = 1_800   # 6% of max_iters=30K
+    max_iters:            int   = 30_000   # at eff_batch=512: ~15.7B tokens = 1.57 passes through FineWeb 10BT
     batch_size:           int   = 16
     effective_batch_size: int   = 512    # accumulation = effective_batch_size / batch_size
     eval_steps:           int   = 100    # evaluate every N training steps
@@ -57,8 +57,8 @@ class Hyperparameters:
 
 # Streaming dataset config (used when G_USE_STREAMING=True)
 G_USE_STREAMING = True
-STREAMING_HF_DATASET = "HuggingFaceFW/fineweb-edu"
-STREAMING_HF_SUBSET = "sample-100BT"
+STREAMING_HF_DATASET = "HuggingFaceFW/fineweb"
+STREAMING_HF_SUBSET = "sample-10BT"
 STREAMING_VAL_DOCS = 2000  # first 2000 documents reserved for validation
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
