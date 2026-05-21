@@ -54,6 +54,8 @@ class Hyperparameters:
     effective_batch_size: int   = 512    # accumulation = effective_batch_size / batch_size
     eval_steps:           int   = 100    # evaluate every N training steps
     eval_iterations:      int   = 50     # batches averaged during validation
+    patience:             int   = 6_000  # stop if no improvement for this many steps (~20% of max_iters)
+    min_delta:            float = 0.01   # minimum improvement in val loss to reset patience
 
 # Streaming dataset config (used when G_USE_STREAMING=True)
 G_USE_STREAMING = True
@@ -369,7 +371,7 @@ class TinyGPT(nn.Module):
         self.blocks = nn.Sequential(*[Block(G_N_EMBD) for _ in range(G_N_LAYERS)]) #Stacking multiple blocks for deeper architecture
 
         self.ln_f = nn.LayerNorm(G_N_EMBD)
-        self.head = nn.Linear(G_N_EMBD, state.vocab_size)
+        self.head = nn.Linear(G_N_EMBD, state.vocab_size, bias=False)
 
         self.apply(self._init_weights)
 
@@ -442,6 +444,7 @@ class TinyGPT(nn.Module):
         steps = []
         train_losses = []
         val_losses = []
+        steps_since_best = 0
         for step in range(start_step, hp.max_iters):
             # 1. Accumulate gradients over multiple micro-batches
             optimizer.zero_grad(set_to_none=True)
@@ -477,12 +480,21 @@ class TinyGPT(nn.Module):
                 marker = " *** best ***" if val_loss.item() < best_val_loss else ""
                 print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}{marker}")
 
+                prev_best = best_val_loss
                 best_val_loss = maybe_save_checkpoint(
                     model=self, optimizer=optimizer, scheduler=scheduler,
                     vocab_size=self.state.vocab_size, step=step,
                     save_path=CHECKPOINT_FILE, val_loss=val_loss.item(),
                     best_val_loss=best_val_loss,
                 )
+
+                if prev_best - val_loss.item() >= hp.min_delta:
+                    steps_since_best = 0
+                else:
+                    steps_since_best += hp.eval_steps
+                    if steps_since_best >= hp.patience:
+                        print(f"Early stopping at step {step+1}: no improvement > {hp.min_delta} for {hp.patience} steps.")
+                        break
 
         plot_losses(steps, train_losses, val_losses, title=PLOT_TITLE, output_path=PLOT_PATH)
 

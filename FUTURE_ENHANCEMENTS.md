@@ -40,7 +40,7 @@ At `effective_batch_size=512`, 9B tokens ≈ 18K steps — a very short run.
 
 ---
 
-## 2. lm_head bias = False
+## 2. lm_head bias = False [DONE]
 
 **File:** `tinygpt.py`, `TinyGPT.__init__`
 
@@ -59,7 +59,7 @@ export trivial, and unlocks weight tying.
 
 ---
 
-## 3. Weight Tying: lm_head.weight = wte.weight
+## 3. Weight Tying: lm_head.weight = wte.weight [OPTIONAL, SKIPPING]
 
 **File:** `tinygpt.py`, `TinyGPT.__init__` (after removing lm_head bias above)
 
@@ -85,22 +85,7 @@ expressiveness at scale. At 163M params it is a net positive.
 
 ---
 
-## 4. Dropout = 0.0 During Pretraining
-
-**File:** `tinygpt.py`
-
-```python
-G_DROPOUT_PROB = 0.0   # keep at 0 for pretraining
-```
-
-Modern LLMs (GPT-3, Llama, Mistral) use zero dropout during pretraining.
-When training on billions of tokens, the model won't overfit the data —
-dropout only wastes compute by zeroing activations that could be learning.
-Add dropout (0.1) only at fine-tuning time via the fine-tuning notebook.
-
----
-
-## 5. Fix G_EVAL_ITERATIONS Hardcoding Bug [DONE]
+## 4. Fix G_EVAL_ITERATIONS Hardcoding Bug [DONE]
 
 The variable `G_EVAL_ITERATIONS` was not being used — the function had `10`
 hardcoded instead. Fixed in a prior commit; `eval_iterations` is now a field
@@ -108,15 +93,13 @@ in the `Hyperparameters` dataclass (default: 50 batches).
 
 ---
 
-## 6. Stop Training When Val Loss Plateaus
+## 5. Stop Training When Val Loss Plateaus [DONE]
 
-Rather than a fixed `max_iters` (now a `Hyperparameters` field, default
-`100_000`), stop when val loss has not improved for ~10K steps after the LR
-has decayed to its minimum. This is more principled than an arbitrary step
-count — you may be leaving performance on the table or wasting compute past
-the plateau.
+Rather than a fixed `max_iters` (which was fine for initial runs), make
+stopping dynamic: track the best val loss seen; if it does not improve by
+at least `min_delta=0.01` for `patience=6_000` steps (12 consecutive evals
+at `eval_interval=500`), save the best checkpoint and exit early.
 
-The 100K default was chosen because at `effective_batch_size=512` it covers
-~52B tokens — already well beyond what nanoGPT used to reach val loss 2.85.
-For a principled stopping rule: once the cosine LR reaches `eta_min` and val
-loss is flat for 10K steps, stop and save.
+`patience=6_000` is ~20% of `max_iters=30_000` — enough to confirm a real
+plateau, not just noise. This avoids wasting compute past the plateau and
+removes the need to pick a magic step count upfront.
