@@ -69,6 +69,16 @@ A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier
 - Fine Tuning [DONE]
 - RLHF
 
+## Retraining Notes
+
+If pretraining TinyGPT from scratch again, the defaults in `Hyperparameters` are already calibrated — no changes needed. Key values to know:
+
+- **Learning rate:** `lr=6e-4` (peak). Validated in attempt 4 with `effective_batch_size=512`. If you change the batch size, scale LR proportionally (linear scaling rule: 2× batch → 2× LR). The 4000-step warmup handles fresh-start gradient instability.
+- **Effective batch size:** `512` sequences (`effective_batch_size=512`, split across accumulation steps). Increasing this was the single biggest lever — attempt 4 showed 16× batch improvement in 60K steps outpaced attempt 3's final 300K steps.
+- **Micro-batch size (`batch_size`):** `16` — a GPU memory limit, not a training hyperparameter. Calibrated for an RTX 4090 (24 GB VRAM) with a 163M param model at sequence length 1024. A GPU with more VRAM (e.g. RTX 5090) can use a larger micro-batch (`batch_size=32` or `64`), which reduces the accumulation steps needed to hit the same effective batch of 512 — same training curve, faster wall-clock time. Formula: `accumulation_steps = effective_batch_size / batch_size`.
+- **Max steps:** `max_iters=50_000`, `warmup_iters=2_500` (5% warmup). At `effective_batch_size=512`, each step processes 512 × 1,024 = 524K tokens. 50K steps ≈ 26B tokens — ~2.9× what nanoGPT used (9B tokens → val loss 2.85). TinyGPT is 31% larger (163M vs 124M params) so proportionally needs more data; 26B is a solid target. The old 600K was designed for `effective_batch_size=32` (16× smaller); at 512 it would mean 300B tokens and 3 full passes through the dataset.
+- **Dataset:** FineWeb-Edu `sample-100BT` streaming (`STREAMING_HF_DATASET` / `STREAMING_HF_SUBSET` globals). This is the right dataset for a like-for-like retrain. Do not downgrade to FineWeb-Edu `sample-10BT` — attempt 2 hit a hard ceiling at val loss 3.34 because that dataset was exhausted. For dataset changes (e.g. switching to base FineWeb), see `FUTURE_ENHANCEMENTS.md`.
+
 ## Dataset
 
 **FemtoGPT** — Uses Shakespeare (Karpathy's dataset).

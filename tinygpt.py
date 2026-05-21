@@ -48,8 +48,8 @@ class Hyperparameters:
     lr:                   float = 6e-4
     weight_decay:         float = 0.1
     grad_clip:            float = 1.0
-    warmup_iters:         int   = 4000
-    max_iters:            int   = 600_000
+    warmup_iters:         int   = 2500
+    max_iters:            int   = 50_000   # at eff_batch=512: ~26B tokens (~2.9× nanoGPT's 9B)
     batch_size:           int   = 16
     effective_batch_size: int   = 512    # accumulation = effective_batch_size / batch_size
     eval_steps:           int   = 100    # evaluate every N training steps

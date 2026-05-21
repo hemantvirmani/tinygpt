@@ -20,6 +20,27 @@ only go to `sample-100BT` if GPU time is abundant.
 
 ---
 
+## 1b. Try OpenWebText for a Direct nanoGPT Comparison
+
+**File:** `tinygpt.py`
+
+```python
+STREAMING_HF_DATASET = "Skylion007/openwebtext"
+STREAMING_HF_SUBSET  = None   # no subset — full dataset is ~9B tokens
+```
+
+nanoGPT GPT-2 small (124M params) trained on OpenWebText and reached val loss
+~2.85. TinyGPT reached 2.84 on FineWeb-Edu, but those are different datasets
+so the comparison isn't apples-to-apples. Training on the same OpenWebText
+would isolate the architecture difference (163M vs 124M, lm_head bias, etc.)
+from the dataset difference. Expected outcome: TinyGPT should beat 2.85 on
+the same data given its larger size, if it doesn't, that's a signal something
+in the architecture or training setup needs revisiting.
+
+At `effective_batch_size=512`, 9B tokens ≈ 18K steps — a very short run.
+
+---
+
 ## 2. lm_head bias = False
 
 **File:** `tinygpt.py`, `TinyGPT.__init__`
@@ -80,26 +101,23 @@ Add dropout (0.1) only at fine-tuning time via the fine-tuning notebook.
 
 ---
 
-## 5. Fix G_EVAL_ITERATIONS Hardcoding Bug
-
-**File:** `tinygpt.py`, `_evaluate_loss` (and anywhere else it's hardcoded)
+## 5. Fix G_EVAL_ITERATIONS Hardcoding Bug [DONE]
 
 The variable `G_EVAL_ITERATIONS` was not being used — the function had `10`
-hardcoded instead. This made val loss readings during pretraining extremely
-noisy (10 batches = ~160 tokens evaluated). Fix it and set a proper value:
-
-```python
-G_EVAL_ITERATIONS = 200   # 200 batches × 16 = 3200 tokens per eval
-```
+hardcoded instead. Fixed in a prior commit; `eval_iterations` is now a field
+in the `Hyperparameters` dataclass (default: 50 batches).
 
 ---
 
 ## 6. Stop Training When Val Loss Plateaus
 
-Rather than a fixed `G_MAX_ITERS = 600000`, stop when val loss has not
-improved for ~10K steps after the LR has decayed to its minimum. This is more
-principled than an arbitrary step count — you may be leaving performance on
-the table or wasting compute past the plateau.
+Rather than a fixed `max_iters` (now a `Hyperparameters` field, default
+`100_000`), stop when val loss has not improved for ~10K steps after the LR
+has decayed to its minimum. This is more principled than an arbitrary step
+count — you may be leaving performance on the table or wasting compute past
+the plateau.
 
-Practical rule: once the cosine LR reaches `eta_min` and val loss is flat for
-10K steps, stop and save.
+The 100K default was chosen because at `effective_batch_size=512` it covers
+~52B tokens — already well beyond what nanoGPT used to reach val loss 2.85.
+For a principled stopping rule: once the cosine LR reaches `eta_min` and val
+loss is flat for 10K steps, stop and save.
