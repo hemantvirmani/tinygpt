@@ -302,34 +302,6 @@ RESUME_CKPT = None
 # RESUME_CKPT = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
 
 
-def _maybe_load_checkpoint(model, optimizer=None, scheduler=None, resume_path=RESUME_CKPT):
-    if not resume_path:
-        print("Starting fresh from step 0.")
-        return 0
-
-    if not os.path.exists(resume_path):
-        print(f"Checkpoint not found at {resume_path}. Starting fresh.")
-        return 0
-
-    ckpt = torch.load(resume_path, map_location=device, weights_only=False)
-    if isinstance(ckpt, dict) and "model_state" in ckpt:
-        state_dict = ckpt["model_state"]
-        if optimizer is not None:
-            optimizer.load_state_dict(ckpt["optimizer_state"])
-        if scheduler is not None and ckpt.get("scheduler_state") is not None:
-            scheduler.load_state_dict(ckpt["scheduler_state"])
-        start_step = int(ckpt.get("step", 0)) + 1
-        print(f"Resumed from {resume_path} at step {start_step}")
-    else:
-        # Plain weights file (no optimizer/scheduler state)
-        state_dict = ckpt
-        start_step = 0
-        print(f"Loaded weights from {resume_path}")
-
-    if any(k.startswith("_orig_mod.") for k in state_dict):
-        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict)
-    return start_step
 
 
 def _maybe_save_checkpoint(model, optimizer, scheduler=None, step=0, vocab_size=0,
@@ -394,10 +366,11 @@ def train_loop(model):
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     print(f"Effective batch size: {EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
-    start_step = _maybe_load_checkpoint(model, optimizer, scheduler)
+    start_step, best_val_loss = tinygpt._maybe_load_checkpoint(
+        model, optimizer, scheduler, resume_path=RESUME_CKPT, device=device)
 
     steps, train_losses, val_losses = [], [], []
-    best_val_loss, best_ckpt_path = float("inf"), None
+    best_ckpt_path = RESUME_CKPT if RESUME_CKPT and best_val_loss < float("inf") else None
 
     for step in range(start_step, MAX_STEPS):
         # 1. Accumulate gradients over multiple micro-batches

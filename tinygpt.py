@@ -395,7 +395,8 @@ class TinyGPT(nn.Module):
         print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
         print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
-        start_step = _maybe_load_checkpoint(self, optimizer, scheduler)
+        resume = CHECKPOINT_FILE if LOAD_CHECKPOINT else None
+        start_step, _ = _maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
 
         steps = []
         train_losses = []
@@ -468,15 +469,16 @@ def _maybe_load_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: Any = None,
     resume_path: str | None = CHECKPOINT_FILE,
-) -> int:
-    if not resume_path or LOAD_CHECKPOINT == False:
-        return 0
+    device: str = G_DEVICE,
+) -> tuple[int, float]:
+    if not resume_path:
+        return 0, float("inf")
 
     if not os.path.exists(resume_path):
         print(f"Checkpoint not found at {resume_path}. Starting fresh.")
-        return 0
+        return 0, float("inf")
 
-    ckpt = torch.load(resume_path, map_location=G_DEVICE, weights_only=False)
+    ckpt = torch.load(resume_path, map_location=device, weights_only=False)
     # Support both full training checkpoints (dict with "model_state" key)
     # and bare state dicts saved for inference-only use.
     if isinstance(ckpt, dict) and "model_state" in ckpt:
@@ -486,17 +488,19 @@ def _maybe_load_checkpoint(
         if scheduler is not None and ckpt.get("scheduler_state") is not None:
             scheduler.load_state_dict(ckpt["scheduler_state"])
         start_step = int(ckpt.get("step", 0)) + 1
+        best_val_loss = float(ckpt.get("val_loss", float("inf")))
         print(f"Resumed from {resume_path} at step {start_step}")
     else:
         state_dict = ckpt
         start_step = 0
+        best_val_loss = float("inf")
         print(f"Loaded weights from {resume_path}")
     # Checkpoints saved from torch.compile'd models have an "_orig_mod." prefix on all keys.
     # Strip it so weights load into either compiled or non-compiled models without error.
     if any(k.startswith("_orig_mod.") for k in state_dict):
         state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict)
-    return start_step
+    return start_step, best_val_loss
 
 def _maybe_save_checkpoint(
     model: nn.Module,
@@ -574,7 +578,7 @@ def load_model_for_inference() -> TinyGPT:
     tokenizer = tiktoken.get_encoding("gpt2")
     state = State(tokenizer=tokenizer, train_data=None, val_data=None, vocab_size=tokenizer.n_vocab)
     model = TinyGPT(state).to(G_DEVICE)
-    _maybe_load_checkpoint(model)
+    _maybe_load_checkpoint(model)  # return values not needed for inference
     model.eval()
     return model
 
