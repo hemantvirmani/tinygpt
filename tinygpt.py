@@ -34,6 +34,7 @@ G_DROPOUT_PROB = 0.0
 G_N_HEAD = 12
 G_EFFECTIVE_BATCH_SIZE = 512   # increased from 32; accumulation = 512/G_BATCH_SIZE
 G_EVAL_ITERATIONS = 50         # increased from 20 for more stable val loss estimate
+G_EVAL_STEPS      = 100        # evaluate every N training steps
 USE_BF16 = True
 _HAS_MPS = hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
 G_DEVICE = "cuda" if torch.cuda.is_available() else ("mps" if _HAS_MPS else "cpu")
@@ -298,6 +299,53 @@ def build_optimizer_scheduler(model: nn.Module, weight_decay: float, learning_ra
     )
     return optimizer, scheduler
 
+def compute_loss(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Forward pass + cross-entropy loss.
+
+    mask=None → plain mean cross-entropy (pretraining).
+    mask provided → masked mean, averaging only over real (non-padding) tokens (fine-tuning).
+    """
+    logits = model(x)
+    B, T, C = logits.shape
+    if mask is None:
+        return F.cross_entropy(logits.view(B * T, C), y.view(B * T))
+    loss = F.cross_entropy(logits.view(B * T, C), y.view(B * T), reduction="none")
+    loss = loss * mask.view(B * T)
+    return loss.sum() / mask.sum()
+
+
+@torch.no_grad()
+def evaluate_loss(
+    model: nn.Module,
+    get_batch_fn,
+    eval_iters: int,
+    device: str,
+    use_bf16: bool,
+) -> torch.Tensor:
+    """Average loss over eval_iters batches for a stable validation metric.
+
+    get_batch_fn must return (x, y, mask) where mask may be None (pretraining).
+    """
+    was_training = model.training
+    model.eval()
+    losses = torch.zeros(eval_iters, device=device)
+    for k in range(eval_iters):
+        x, y, mask = get_batch_fn()
+        if device == "cuda" and use_bf16:
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                losses[k] = compute_loss(model, x, y, mask)
+        else:
+            losses[k] = compute_loss(model, x, y, mask)
+    if was_training:
+        model.train()
+    return losses.mean()
+
+
 #Lets Create the GPT model
 class TinyGPT(nn.Module):
     def __init__(self, state: State):
@@ -356,30 +404,6 @@ class TinyGPT(nn.Module):
         y = torch.from_numpy(batch[:, 1:]).long()
         return x.to(G_DEVICE), y.to(G_DEVICE)
 
-    def _compute_loss(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        logits = self(x)
-        B, T, C = logits.shape
-        logits = logits.view(B * T, C)
-        targets = y.view(B * T)
-        return F.cross_entropy(logits, targets)
-
-    @torch.no_grad()
-    def _evaluate_loss(self, eval_iters=G_EVAL_ITERATIONS) -> torch.Tensor:
-        """Averages loss over multiple batches for a more stable validation metric."""
-        was_training = self.training
-        self.eval()
-        losses = torch.zeros(eval_iters, device=G_DEVICE)
-        for k in range(eval_iters):
-            val_x, val_y = self._get_batch(split="val")
-            if G_DEVICE == "cuda" and USE_BF16:
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    losses[k] = self._compute_loss(val_x, val_y)
-            else:
-                losses[k] = self._compute_loss(val_x, val_y)
-        val_loss = losses.mean()
-        if was_training: self.train()
-        return val_loss
-
     def train_loop(self) -> None:
         optimizer, scheduler = build_optimizer_scheduler(
             self, G_WEIGHT_DECAY, G_LR, G_DEVICE, G_WARMPUP_ITERS, G_MAX_ITERS)
@@ -392,8 +416,9 @@ class TinyGPT(nn.Module):
         print(f"Total parameters: {sum(p.numel() for p in self.parameters())/1e6:.2f}M")
         print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
-        resume = CHECKPOINT_FILE if LOAD_CHECKPOINT else None
-        start_step, best_val_loss = maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
+        start_step, best_val_loss = maybe_load_checkpoint(
+            self, optimizer, scheduler,
+            resume_path=CHECKPOINT_FILE if LOAD_CHECKPOINT else None)
 
         steps = []
         train_losses = []
@@ -407,9 +432,9 @@ class TinyGPT(nn.Module):
                 x, y = self._get_batch(split="train")
                 if G_DEVICE == "cuda" and USE_BF16:
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        loss = self._compute_loss(x, y)
+                        loss = compute_loss(self, x, y)
                 else:
-                    loss = self._compute_loss(x, y)
+                    loss = compute_loss(self, x, y)
                 # Scale loss by accumulation steps so gradients are averaged correctly
                 scaled_loss = loss / accumulation_steps
                 scaled_loss.backward()
@@ -423,8 +448,12 @@ class TinyGPT(nn.Module):
             scheduler.step()
 
             # 3. Logging and Checkpointing
-            if (step + 1) % 100 == 0 or step == start_step:
-                val_loss = self._evaluate_loss(eval_iters=G_EVAL_ITERATIONS)
+            if (step + 1) % G_EVAL_STEPS == 0 or step == start_step:
+                val_loss = evaluate_loss(
+                    self,
+                    lambda: (*self._get_batch("val"), None),
+                    G_EVAL_ITERATIONS, G_DEVICE, USE_BF16,
+                )
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
                 val_losses.append(val_loss.item())

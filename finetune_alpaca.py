@@ -32,9 +32,7 @@ import sys
 import os
 import random
 import torch
-import torch.nn.functional as F
 import tiktoken
-import matplotlib.pyplot as plt
 from datasets import load_dataset
 
 # Match the pretraining script's matmul precision setting.
@@ -167,16 +165,8 @@ print(f"Train: {len(train_data)} | Val: {len(val_data)}")
 print("\nFormatted example (decoded):")
 print(enc.decode(train_data[0]))
 
-# =============================================================================
-# Step 5: Batch Sampler
-#
-# Since Alpaca examples have variable lengths, we pad shorter sequences to
-# the longest in the batch. Padding tokens are masked out in the loss
-# so they don't affect training.
-# =============================================================================
-
 def _get_batch(split):
-    """Sample a random Alpaca batch, pad it, and return (x, y, mask)."""
+    """Sample a random Alpaca batch, pad to max length, return (x, y, mask)."""
     data = train_data if split == "train" else val_data
     batch = random.sample(data, BATCH_SIZE)
 
@@ -201,42 +191,6 @@ def _get_batch(split):
     mask = torch.tensor(mask_list, dtype=torch.float).to(device)
     return x, y, mask
 
-
-def _compute_loss(model, x, y, mask):
-    """Forward pass + masked cross entropy loss.
-
-    Unlike pretraining, we only train on real (non-padded) tokens.
-    The mask zeroes out padding positions so they contribute nothing to
-    the gradient.
-    """
-    logits = model(x)                          # (B, T, vocab)
-    B, T, C = logits.shape
-    loss = F.cross_entropy(
-        logits.view(B * T, C),
-        y.view(B * T),
-        reduction="none"
-    )                                          # (B*T,)
-    loss = loss * mask.view(B * T)             # zero out padding positions
-    return loss.sum() / mask.sum()             # mean over real tokens only
-
-
-@torch.no_grad()
-def _evaluate_loss(model, eval_iters=EVAL_ITERATIONS):
-    """Averages loss over multiple batches for a more stable validation metric."""
-    was_training = model.training
-    model.eval()
-    losses = torch.zeros(eval_iters, device=device)
-    for k in range(eval_iters):
-        val_x, val_y, val_mask = _get_batch(split="val")
-        if device == "cuda" and USE_BF16:
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                losses[k] = _compute_loss(model, val_x, val_y, val_mask)
-        else:
-            losses[k] = _compute_loss(model, val_x, val_y, val_mask)
-    val_loss = losses.mean()
-    if was_training:
-        model.train()
-    return val_loss
 
 # =============================================================================
 # Step 6: Baseline — Test BEFORE Fine-Tuning
@@ -302,9 +256,9 @@ def train_loop(model):
             x, y, mask = _get_batch(split="train")
             if device == "cuda" and USE_BF16:
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    loss = _compute_loss(model, x, y, mask)
+                    loss = tinygpt.compute_loss(model, x, y, mask)
             else:
-                loss = _compute_loss(model, x, y, mask)
+                loss = tinygpt.compute_loss(model, x, y, mask)
             scaled_loss = loss / accumulation_steps
             scaled_loss.backward()
             micro_step_loss += loss.item()
@@ -318,7 +272,9 @@ def train_loop(model):
 
         # 3. Evaluate and checkpoint if best
         if (step + 1) % EVAL_STEPS == 0 or step == start_step:
-            val_loss_val = _evaluate_loss(model, eval_iters=EVAL_ITERATIONS).item()
+            val_loss_val = tinygpt.evaluate_loss(
+                model, lambda: _get_batch("val"), EVAL_ITERATIONS, device, USE_BF16,
+            ).item()
             steps.append(step + 1)
             train_losses.append(avg_train_loss)
             val_losses.append(val_loss_val)
