@@ -340,31 +340,28 @@ class TinyGPT(nn.Module):
         targets = y.view(B * T)
         return F.cross_entropy(logits, targets)
 
-    def _setup_training(self):
-        
+    @staticmethod
+    def _setup_training(model: nn.Module, weight_decay: float, learning_rate: float,
+                        device_type: str, warmup_iters: int, max_iters: int):
         optimizer = _configure_optimizers(
-            model=self,
-            weight_decay=G_WEIGHT_DECAY,
-            learning_rate=G_LR,
-            device_type=G_DEVICE)
-        
-        # 1. Define the Warmup Scheduler (Linear increase from a 10% of G_LR to G_LR)
+            model=model,
+            weight_decay=weight_decay,
+            learning_rate=learning_rate,
+            device_type=device_type)
+
         scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=0.1,end_factor=1.0,
-            total_iters=G_WARMPUP_ITERS)
+            optimizer, start_factor=0.1, end_factor=1.0,
+            total_iters=warmup_iters)
 
-        # 2. Define the Main Scheduler (Cosine decay from G_LR to eta_min)
         scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=(G_MAX_ITERS - G_WARMPUP_ITERS),
-            eta_min=0.1*G_LR) # Decay to 10% of G_LR by the end of training
+            optimizer, T_max=(max_iters - warmup_iters),
+            eta_min=0.1 * learning_rate)
 
-        # 3. Combine them using SequentialLR - milestones=[500] means switch to the second scheduler at step 500
         scheduler = torch.optim.lr_scheduler.SequentialLR(
             optimizer,
             schedulers=[scheduler_warmup, scheduler_cosine],
-            milestones=[G_WARMPUP_ITERS]
+            milestones=[warmup_iters],
         )
-
         return optimizer, scheduler
 
     @torch.no_grad()
@@ -385,7 +382,8 @@ class TinyGPT(nn.Module):
         return val_loss
 
     def train_loop(self) -> None:
-        optimizer, scheduler = self._setup_training()
+        optimizer, scheduler = TinyGPT._setup_training(
+            self, G_WEIGHT_DECAY, G_LR, G_DEVICE, G_WARMPUP_ITERS, G_MAX_ITERS)
 
         # Target an effective batch size of 32 to reduce "waviness"
         # Since G_BATCH_SIZE is 4, we accumulate for 8 steps (4 * 8 = 32)

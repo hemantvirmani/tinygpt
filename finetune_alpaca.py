@@ -268,28 +268,6 @@ test_model(model, test_prompts, label="BASELINE (Before Fine-Tuning)")
 # Step 7: Optimizer and Scheduler
 # =============================================================================
 
-def _setup_training(model):
-    optimizer = tinygpt._configure_optimizers(
-        model,
-        weight_decay=WEIGHT_DECAY,
-        learning_rate=LEARNING_RATE,
-        device_type=device,
-    )
-    # Linear warmup from 10% of LR to full LR over WARMUP_STEPS
-    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-        optimizer, start_factor=0.1, end_factor=1.0, total_iters=WARMUP_STEPS
-    )
-    # Cosine decay from full LR to 10% of LR over the remaining steps
-    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=(MAX_STEPS - WARMUP_STEPS), eta_min=0.1 * LEARNING_RATE
-    )
-    # Chain them: warmup first, then cosine
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer,
-        schedulers=[scheduler_warmup, scheduler_cosine],
-        milestones=[WARMUP_STEPS],
-    )
-    return optimizer, scheduler
 
 # =============================================================================
 # Step 8: Resume from Checkpoint (Optional)
@@ -312,7 +290,8 @@ RESUME_CKPT = None
 # =============================================================================
 
 def train_loop(model):
-    optimizer, scheduler = _setup_training(model)
+    optimizer, scheduler = tinygpt.TinyGPT._setup_training(
+        model, WEIGHT_DECAY, LEARNING_RATE, device, WARMUP_STEPS, MAX_STEPS)
 
     assert EFFECTIVE_BATCH_SIZE % BATCH_SIZE == 0, \
         "EFFECTIVE_BATCH_SIZE must be divisible by BATCH_SIZE"
