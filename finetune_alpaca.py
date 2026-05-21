@@ -290,7 +290,7 @@ RESUME_CKPT = None
 # =============================================================================
 
 def train_loop(model):
-    optimizer, scheduler = tinygpt.TinyGPT._setup_training(
+    optimizer, scheduler = tinygpt.TinyGPT._build_optimizer_scheduler(
         model, WEIGHT_DECAY, LEARNING_RATE, device, WARMUP_STEPS, MAX_STEPS)
 
     assert EFFECTIVE_BATCH_SIZE % BATCH_SIZE == 0, \

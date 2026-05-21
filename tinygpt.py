@@ -341,7 +341,7 @@ class TinyGPT(nn.Module):
         return F.cross_entropy(logits, targets)
 
     @staticmethod
-    def _setup_training(model: nn.Module, weight_decay: float, learning_rate: float,
+    def _build_optimizer_scheduler(model: nn.Module, weight_decay: float, learning_rate: float,
                         device_type: str, warmup_iters: int, max_iters: int):
         optimizer = _configure_optimizers(
             model=model,
@@ -382,7 +382,7 @@ class TinyGPT(nn.Module):
         return val_loss
 
     def train_loop(self) -> None:
-        optimizer, scheduler = TinyGPT._setup_training(
+        optimizer, scheduler = TinyGPT._build_optimizer_scheduler(
             self, G_WEIGHT_DECAY, G_LR, G_DEVICE, G_WARMPUP_ITERS, G_MAX_ITERS)
 
         # Target an effective batch size of 32 to reduce "waviness"
