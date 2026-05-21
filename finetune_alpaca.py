@@ -44,18 +44,10 @@ MODEL_DIR    = "/kaggle/working/models"
 WEIGHTS_PATH = f"{MODEL_DIR}/tinygpt_pretrained_weights.pt"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# --- Fine-tuning Hyperparameters ---
-BATCH_SIZE           = 4
-EFFECTIVE_BATCH_SIZE = 64    # accumulation_steps = 64/4 = 16
-MAX_STEPS            = 5000
-LEARNING_RATE        = 1e-4  # lower than pretraining
-WEIGHT_DECAY         = 0.01
-GRAD_CLIP            = 1.0
-WARMUP_STEPS         = 100
-EVAL_STEPS           = 100   # evaluate every 100 steps
-EVAL_ITERATIONS      = 50    # batches averaged during validation
-MAX_SEQ_LEN          = 512   # shorter than pretraining 1024 — Alpaca examples are short
-VAL_SPLIT            = 0.1
+# --- Fine-tuning Data Config ---
+MAX_SEQ_LEN = 512   # shorter than pretraining 1024 — Alpaca examples are short
+VAL_SPLIT   = 0.1
+# Fine-tuning Hyperparameters are set via tinygpt.Hyperparameters after the import below.
 # BF16 requires Ampere (A100, RTX 3090+). Kaggle T4/P100 don't support it — auto-detect.
 USE_BF16             = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
 
@@ -72,6 +64,16 @@ print(f"BF16: {USE_BF16}")
 
 sys.path.insert(0, TINYGPT_DIR)
 import tinygpt
+
+# Fine-tuning hyperparameters — override pretraining defaults where needed
+hparams = tinygpt.Hyperparameters(
+    lr=1e-4,                 # lower than pretraining
+    weight_decay=0.01,       # lighter regularization
+    warmup_iters=100,        # much shorter warmup than pretraining
+    max_iters=5000,
+    batch_size=4,
+    effective_batch_size=64, # accumulation_steps = 64/4 = 16
+)
 
 # Load tokenizer
 enc = tiktoken.get_encoding("gpt2")
@@ -168,7 +170,7 @@ print(enc.decode(train_data[0]))
 def _get_batch_finetuning(split):
     """Sample a random Alpaca batch, pad to max length, return (x, y, mask)."""
     data = train_data if split == "train" else val_data
-    batch = random.sample(data, BATCH_SIZE)
+    batch = random.sample(data, hparams.batch_size)
 
     max_len = max(len(s) for s in batch)
 
@@ -231,15 +233,16 @@ RESUME_CKPT = None
 # =============================================================================
 
 def train_loop(model):
+    hp = hparams
     optimizer, scheduler = tinygpt.build_optimizer_scheduler(
-        model, WEIGHT_DECAY, LEARNING_RATE, device, WARMUP_STEPS, MAX_STEPS)
+        model, hp.weight_decay, hp.lr, device, hp.warmup_iters, hp.max_iters)
 
-    assert EFFECTIVE_BATCH_SIZE % BATCH_SIZE == 0, \
-        "EFFECTIVE_BATCH_SIZE must be divisible by BATCH_SIZE"
-    accumulation_steps = EFFECTIVE_BATCH_SIZE // BATCH_SIZE
+    assert hp.effective_batch_size % hp.batch_size == 0, \
+        "effective_batch_size must be divisible by batch_size"
+    accumulation_steps = hp.effective_batch_size // hp.batch_size
 
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
-    print(f"Effective batch size: {EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
+    print(f"Effective batch size: {hp.effective_batch_size} (via {accumulation_steps} accumulation steps)")
 
     start_step, best_val_loss = tinygpt.maybe_load_checkpoint(
         model, optimizer, scheduler, resume_path=RESUME_CKPT, device=device)
@@ -247,7 +250,7 @@ def train_loop(model):
     steps, train_losses, val_losses = [], [], []
     save_path = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
 
-    for step in range(start_step, MAX_STEPS):
+    for step in range(start_step, hp.max_iters):
         # 1. Accumulate gradients over multiple micro-batches
         optimizer.zero_grad(set_to_none=True)
         micro_step_loss = 0.0
@@ -266,14 +269,14 @@ def train_loop(model):
         avg_train_loss = micro_step_loss / accumulation_steps
 
         # 2. Clip and update weights
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=hp.grad_clip)
         optimizer.step()
         scheduler.step()
 
         # 3. Evaluate and checkpoint if best
-        if (step + 1) % EVAL_STEPS == 0 or step == start_step:
+        if (step + 1) % hp.eval_steps == 0 or step == start_step:
             val_loss_val = tinygpt.evaluate_loss(
-                model, lambda: _get_batch_finetuning("val"), EVAL_ITERATIONS, device, USE_BF16,
+                model, lambda: _get_batch_finetuning("val"), hp.eval_iterations, device, USE_BF16,
             ).item()
             steps.append(step + 1)
             train_losses.append(avg_train_loss)
