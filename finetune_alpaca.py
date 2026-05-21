@@ -264,23 +264,10 @@ def test_model(model, prompts, label=""):
 
 test_model(model, test_prompts, label="BASELINE (Before Fine-Tuning)")
 
-# =============================================================================
-# Step 7: Optimizer and Scheduler
-# =============================================================================
 
-
-# =============================================================================
-# Step 8: Resume from Checkpoint (Optional)
-#
-# If resuming a previous fine-tuning run, set RESUME_CKPT to the checkpoint
-# file path. Leave as None to start fresh.
-# =============================================================================
-
+# Set to a checkpoint path to resume fine-tuning, or None to start fresh.
 RESUME_CKPT = None
 # RESUME_CKPT = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
-
-
-
 
 
 
@@ -290,7 +277,7 @@ RESUME_CKPT = None
 # =============================================================================
 
 def train_loop(model):
-    optimizer, scheduler = tinygpt.TinyGPT._build_optimizer_scheduler(
+    optimizer, scheduler = tinygpt.build_optimizer_scheduler(
         model, WEIGHT_DECAY, LEARNING_RATE, device, WARMUP_STEPS, MAX_STEPS)
 
     assert EFFECTIVE_BATCH_SIZE % BATCH_SIZE == 0, \
@@ -300,7 +287,7 @@ def train_loop(model):
     print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
     print(f"Effective batch size: {EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
-    start_step, best_val_loss = tinygpt._maybe_load_checkpoint(
+    start_step, best_val_loss = tinygpt.maybe_load_checkpoint(
         model, optimizer, scheduler, resume_path=RESUME_CKPT, device=device)
 
     steps, train_losses, val_losses = [], [], []
@@ -339,7 +326,7 @@ def train_loop(model):
             marker = " *** best ***" if val_loss_val < best_val_loss else ""
             print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss_val:.4f}{marker}")
 
-            best_val_loss = tinygpt._maybe_save_checkpoint(
+            best_val_loss = tinygpt.maybe_save_checkpoint(
                 model=model, optimizer=optimizer, scheduler=scheduler,
                 step=step, vocab_size=enc.n_vocab,
                 save_path=save_path,
@@ -347,7 +334,7 @@ def train_loop(model):
             )
 
     print(f"\nBest val loss: {best_val_loss:.4f} — checkpoint: {save_path}")
-    tinygpt._plot_losses(
+    tinygpt.plot_losses(
         steps, train_losses, val_losses,
         title="Fine-Tuning Loss — TinyGPT on Alpaca Cleaned",
         output_path=f"{MODEL_DIR}/finetune_loss_curve.png",

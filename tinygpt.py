@@ -257,7 +257,7 @@ class Block(nn.Module):
 
         return x
 
-def _configure_optimizers(model: nn.Module, weight_decay: float, learning_rate: float, device_type: str):
+def configure_optimizers(model: nn.Module, weight_decay: float, learning_rate: float, device_type: str):
     param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
     decay_params   = [p for _, p in param_dict.items() if p.dim() >= 2]
     nodecay_params = [p for _, p in param_dict.items() if p.dim() < 2]
@@ -274,6 +274,29 @@ def _configure_optimizers(model: nn.Module, weight_decay: float, learning_rate: 
     print(f"using fused AdamW: {use_fused}")
     optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, fused=use_fused)
     return optimizer
+
+def build_optimizer_scheduler(model: nn.Module, weight_decay: float, learning_rate: float,
+                              device_type: str, warmup_iters: int, max_iters: int):
+    optimizer = configure_optimizers(
+        model=model,
+        weight_decay=weight_decay,
+        learning_rate=learning_rate,
+        device_type=device_type)
+
+    scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
+        optimizer, start_factor=0.1, end_factor=1.0,
+        total_iters=warmup_iters)
+
+    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=(max_iters - warmup_iters),
+        eta_min=0.1 * learning_rate)
+
+    scheduler = torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[scheduler_warmup, scheduler_cosine],
+        milestones=[warmup_iters],
+    )
+    return optimizer, scheduler
 
 #Lets Create the GPT model
 class TinyGPT(nn.Module):
@@ -340,30 +363,6 @@ class TinyGPT(nn.Module):
         targets = y.view(B * T)
         return F.cross_entropy(logits, targets)
 
-    @staticmethod
-    def _build_optimizer_scheduler(model: nn.Module, weight_decay: float, learning_rate: float,
-                        device_type: str, warmup_iters: int, max_iters: int):
-        optimizer = _configure_optimizers(
-            model=model,
-            weight_decay=weight_decay,
-            learning_rate=learning_rate,
-            device_type=device_type)
-
-        scheduler_warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer, start_factor=0.1, end_factor=1.0,
-            total_iters=warmup_iters)
-
-        scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=(max_iters - warmup_iters),
-            eta_min=0.1 * learning_rate)
-
-        scheduler = torch.optim.lr_scheduler.SequentialLR(
-            optimizer,
-            schedulers=[scheduler_warmup, scheduler_cosine],
-            milestones=[warmup_iters],
-        )
-        return optimizer, scheduler
-
     @torch.no_grad()
     def _evaluate_loss(self, eval_iters=G_EVAL_ITERATIONS) -> torch.Tensor:
         """Averages loss over multiple batches for a more stable validation metric."""
@@ -382,7 +381,7 @@ class TinyGPT(nn.Module):
         return val_loss
 
     def train_loop(self) -> None:
-        optimizer, scheduler = TinyGPT._build_optimizer_scheduler(
+        optimizer, scheduler = build_optimizer_scheduler(
             self, G_WEIGHT_DECAY, G_LR, G_DEVICE, G_WARMPUP_ITERS, G_MAX_ITERS)
 
         # Target an effective batch size of 32 to reduce "waviness"
@@ -394,7 +393,7 @@ class TinyGPT(nn.Module):
         print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
         resume = CHECKPOINT_FILE if LOAD_CHECKPOINT else None
-        start_step, best_val_loss = _maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
+        start_step, best_val_loss = maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
 
         steps = []
         train_losses = []
@@ -432,14 +431,14 @@ class TinyGPT(nn.Module):
                 marker = " *** best ***" if val_loss.item() < best_val_loss else ""
                 print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}{marker}")
 
-                best_val_loss = _maybe_save_checkpoint(
+                best_val_loss = maybe_save_checkpoint(
                     model=self, optimizer=optimizer, scheduler=scheduler,
                     vocab_size=self.state.vocab_size, step=step,
                     save_path=CHECKPOINT_FILE, val_loss=val_loss.item(),
                     best_val_loss=best_val_loss,
                 )
 
-        _plot_losses(steps, train_losses, val_losses)
+        plot_losses(steps, train_losses, val_losses)
 
     # Text Generation Function
     def generate_text(self, start_text, max_tokens=50, temperature=0.7, top_k=None):
@@ -466,7 +465,7 @@ class TinyGPT(nn.Module):
         text = self.state.tokenizer.decode(idx[0].tolist())
         return text
 
-def _maybe_load_checkpoint(
+def maybe_load_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: Any = None,
@@ -504,7 +503,7 @@ def _maybe_load_checkpoint(
     model.load_state_dict(state_dict)
     return start_step, best_val_loss
 
-def _maybe_save_checkpoint(
+def maybe_save_checkpoint(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
     scheduler: Any = None,
@@ -533,7 +532,7 @@ def _maybe_save_checkpoint(
     print(f"Saved checkpoint: {save_path} (val {val_loss:.4f})")
     return val_loss
 
-def _plot_losses(steps, train_losses, val_losses,
+def plot_losses(steps, train_losses, val_losses,
                  title: str = "Training vs Validation Loss",
                  output_path: str = "loss_curve.png",
                  dpi: int = 100):
@@ -587,7 +586,7 @@ def load_model_for_inference() -> TinyGPT:
     tokenizer = tiktoken.get_encoding("gpt2")
     state = State(tokenizer=tokenizer, train_data=None, val_data=None, vocab_size=tokenizer.n_vocab)
     model = TinyGPT(state).to(G_DEVICE)
-    _maybe_load_checkpoint(model)  # return values not needed for inference
+    maybe_load_checkpoint(model)  # return values not needed for inference
     model.eval()
     return model
 
