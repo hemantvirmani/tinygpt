@@ -39,6 +39,8 @@ USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = True
 BINARY_DATASET_FILENAME = "dataset.bin"
 CHECKPOINT_FILE = "tinygpt_pretrained_weights.pt"
+PLOT_TITLE = "Training vs Validation Loss — Pretraining"
+PLOT_PATH  = "pretraining_loss_curve.png"
 
 
 @dataclass
@@ -413,7 +415,7 @@ class TinyGPT(nn.Module):
         y = torch.from_numpy(batch[:, 1:]).long()
         return x.to(G_DEVICE), y.to(G_DEVICE)
 
-    def train_loop(self) -> None:
+    def train_loop(self, get_batch_fn=None) -> None:
         hp = self.hparams
         optimizer, scheduler = build_optimizer_scheduler(
             self, hp.weight_decay, hp.lr, G_DEVICE, hp.warmup_iters, hp.max_iters)
@@ -429,6 +431,14 @@ class TinyGPT(nn.Module):
             self, optimizer, scheduler,
             resume_path=CHECKPOINT_FILE if LOAD_CHECKPOINT else None)
 
+        # Resolve batch functions once — both return (x, y, mask)
+        if get_batch_fn is not None:
+            train_fn = lambda: get_batch_fn("train")
+            val_fn   = lambda: get_batch_fn("val")
+        else:
+            train_fn = lambda: (*self._get_batch("train"), None)
+            val_fn   = lambda: (*self._get_batch("val"), None)
+
         steps = []
         train_losses = []
         val_losses = []
@@ -438,12 +448,12 @@ class TinyGPT(nn.Module):
             micro_step_loss = 0.0
 
             for _ in range(accumulation_steps):
-                x, y = self._get_batch(split="train")
+                x, y, mask = train_fn()
                 if G_DEVICE == "cuda" and USE_BF16:
                     with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                        loss = compute_loss(self, x, y)
+                        loss = compute_loss(self, x, y, mask)
                 else:
-                    loss = compute_loss(self, x, y)
+                    loss = compute_loss(self, x, y, mask)
                 # Scale loss by accumulation steps so gradients are averaged correctly
                 scaled_loss = loss / accumulation_steps
                 scaled_loss.backward()
@@ -459,9 +469,7 @@ class TinyGPT(nn.Module):
             # 3. Logging and Checkpointing
             if (step + 1) % hp.eval_steps == 0 or step == start_step:
                 val_loss = evaluate_loss(
-                    self,
-                    lambda: (*self._get_batch("val"), None),
-                    hp.eval_iterations, G_DEVICE, USE_BF16,
+                    self, val_fn, hp.eval_iterations, G_DEVICE, USE_BF16,
                 )
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
@@ -476,7 +484,7 @@ class TinyGPT(nn.Module):
                     best_val_loss=best_val_loss,
                 )
 
-        plot_losses(steps, train_losses, val_losses)
+        plot_losses(steps, train_losses, val_losses, title=PLOT_TITLE, output_path=PLOT_PATH)
 
     # Text Generation Function
     def generate_text(self, start_text, max_tokens=50, temperature=0.7, top_k=None):

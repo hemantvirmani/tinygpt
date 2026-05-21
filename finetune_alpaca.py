@@ -39,14 +39,18 @@ from datasets import load_dataset
 torch.set_float32_matmul_precision("high")
 
 # --- Paths ---
-TINYGPT_DIR  = "/kaggle/working/tinygpt"              # where tinygpt.py lives
-MODEL_DIR    = "/kaggle/working/models"
-WEIGHTS_PATH = f"{MODEL_DIR}/tinygpt_pretrained_weights.pt"
+TINYGPT_DIR         = "/kaggle/working/tinygpt"              # where tinygpt.py lives
+MODEL_DIR           = "/kaggle/working/models"
+WEIGHTS_PATH        = f"{MODEL_DIR}/tinygpt_pretrained_weights.pt"
+FINETUNE_CHECKPOINT = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
+FINETUNE_PLOT_PATH  = f"{MODEL_DIR}/finetune_loss_curve.png"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-# --- Fine-tuning Data Config ---
-MAX_SEQ_LEN = 512   # shorter than pretraining 1024 — Alpaca examples are short
-VAL_SPLIT   = 0.1
+# --- Fine-tuning Config ---
+MAX_SEQ_LEN         = 512    # shorter than pretraining 1024 — Alpaca examples are short
+VAL_SPLIT           = 0.1
+LOAD_FINETUNE_CHECKPOINT              = False  # set True to resume training from FINETUNE_CHECKPOINT
+FINETUNE_PLOT_TITLE = "Fine-Tuning Loss — TinyGPT on Alpaca Cleaned"
 # Fine-tuning Hyperparameters are set via tinygpt.Hyperparameters after the import below.
 # BF16 requires Ampere (A100, RTX 3090+). Kaggle T4/P100 don't support it — auto-detect.
 USE_BF16             = torch.cuda.is_bf16_supported() if torch.cuda.is_available() else False
@@ -221,88 +225,20 @@ def test_model(model, prompts, label=""):
 test_model(model, test_prompts, label="BASELINE (Before Fine-Tuning)")
 
 
-# Set to a checkpoint path to resume fine-tuning, or None to start fresh.
-RESUME_CKPT = None
-# RESUME_CKPT = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
-
-
-
-
 # =============================================================================
 # Step 9: Training Loop
 # =============================================================================
 
-def train_loop(model):
-    hp = hparams
-    optimizer, scheduler = tinygpt.build_optimizer_scheduler(
-        model, hp.weight_decay, hp.lr, device, hp.warmup_iters, hp.max_iters)
+# Point tinygpt's infrastructure globals at fine-tuning paths and labels.
+# To resume from a prior run, set LOAD_FINETUNE_CHECKPOINT = True and ensure
+# CHECKPOINT_FILE points to the existing checkpoint.
+tinygpt.CHECKPOINT_FILE = FINETUNE_CHECKPOINT
+tinygpt.LOAD_CHECKPOINT = LOAD_FINETUNE_CHECKPOINT
+tinygpt.PLOT_TITLE      = FINETUNE_PLOT_TITLE
+tinygpt.PLOT_PATH       = FINETUNE_PLOT_PATH
 
-    assert hp.effective_batch_size % hp.batch_size == 0, \
-        "effective_batch_size must be divisible by batch_size"
-    accumulation_steps = hp.effective_batch_size // hp.batch_size
-
-    print(f"Total parameters: {sum(p.numel() for p in model.parameters())/1e6:.2f}M")
-    print(f"Effective batch size: {hp.effective_batch_size} (via {accumulation_steps} accumulation steps)")
-
-    start_step, best_val_loss = tinygpt.maybe_load_checkpoint(
-        model, optimizer, scheduler, resume_path=RESUME_CKPT, device=device)
-
-    steps, train_losses, val_losses = [], [], []
-    save_path = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
-
-    for step in range(start_step, hp.max_iters):
-        # 1. Accumulate gradients over multiple micro-batches
-        optimizer.zero_grad(set_to_none=True)
-        micro_step_loss = 0.0
-
-        for _ in range(accumulation_steps):
-            x, y, mask = _get_batch_finetuning(split="train")
-            if device == "cuda" and USE_BF16:
-                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    loss = tinygpt.compute_loss(model, x, y, mask)
-            else:
-                loss = tinygpt.compute_loss(model, x, y, mask)
-            scaled_loss = loss / accumulation_steps
-            scaled_loss.backward()
-            micro_step_loss += loss.item()
-
-        avg_train_loss = micro_step_loss / accumulation_steps
-
-        # 2. Clip and update weights
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=hp.grad_clip)
-        optimizer.step()
-        scheduler.step()
-
-        # 3. Evaluate and checkpoint if best
-        if (step + 1) % hp.eval_steps == 0 or step == start_step:
-            val_loss_val = tinygpt.evaluate_loss(
-                model, lambda: _get_batch_finetuning("val"), hp.eval_iterations, device, USE_BF16,
-            ).item()
-            steps.append(step + 1)
-            train_losses.append(avg_train_loss)
-            val_losses.append(val_loss_val)
-
-            marker = " *** best ***" if val_loss_val < best_val_loss else ""
-            print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss_val:.4f}{marker}")
-
-            best_val_loss = tinygpt.maybe_save_checkpoint(
-                model=model, optimizer=optimizer, scheduler=scheduler,
-                step=step, vocab_size=enc.n_vocab,
-                save_path=save_path,
-                val_loss=val_loss_val, best_val_loss=best_val_loss,
-            )
-
-    print(f"\nBest val loss: {best_val_loss:.4f} — checkpoint: {save_path}")
-    tinygpt.plot_losses(
-        steps, train_losses, val_losses,
-        title="Fine-Tuning Loss — TinyGPT on Alpaca Cleaned",
-        output_path=f"{MODEL_DIR}/finetune_loss_curve.png",
-        dpi=150,
-    )
-    return steps, train_losses, val_losses
-
-
-steps, train_losses, val_losses = train_loop(model)
+model.hparams = hparams
+model.train_loop(get_batch_fn=_get_batch_finetuning)
 print("\nTraining complete!")
 
 
