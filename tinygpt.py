@@ -396,17 +396,16 @@ class TinyGPT(nn.Module):
         print(f"Effective batch size: {G_EFFECTIVE_BATCH_SIZE} (via {accumulation_steps} accumulation steps)")
 
         resume = CHECKPOINT_FILE if LOAD_CHECKPOINT else None
-        start_step, _ = _maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
+        start_step, best_val_loss = _maybe_load_checkpoint(self, optimizer, scheduler, resume_path=resume)
 
         steps = []
         train_losses = []
         val_losses = []
-
         for step in range(start_step, G_MAX_ITERS):
             # 1. Accumulate gradients over multiple micro-batches
             optimizer.zero_grad(set_to_none=True)
             micro_step_loss = 0.0
-            
+
             for _ in range(accumulation_steps):
                 x, y = self._get_batch(split="train")
                 if G_DEVICE == "cuda" and USE_BF16:
@@ -432,10 +431,15 @@ class TinyGPT(nn.Module):
                 steps.append(step + 1)
                 train_losses.append(avg_train_loss)
                 val_losses.append(val_loss.item())
-                print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}")
+                marker = " *** best ***" if val_loss.item() < best_val_loss else ""
+                print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss.item():.4f}{marker}")
 
-            _maybe_save_checkpoint(model=self, optimizer=optimizer, scheduler=scheduler,
-                vocab_size=self.state.vocab_size, step=step)
+                best_val_loss = _maybe_save_checkpoint(
+                    model=self, optimizer=optimizer, scheduler=scheduler,
+                    vocab_size=self.state.vocab_size, step=step,
+                    save_path=CHECKPOINT_FILE, val_loss=val_loss.item(),
+                    best_val_loss=best_val_loss,
+                )
 
         _plot_losses(steps, train_losses, val_losses)
 
@@ -508,23 +512,28 @@ def _maybe_save_checkpoint(
     scheduler: Any = None,
     step: int = 0,
     vocab_size: int = 0,
-    resume_path: str | None = CHECKPOINT_FILE,
-) -> None:
-    if resume_path is None or (step + 1) % 100 != 0:
-        return
+    save_path: str | None = CHECKPOINT_FILE,
+    val_loss: float | None = None,
+    best_val_loss: float = float("inf"),
+) -> float:
+    if save_path is None or val_loss is None or val_loss >= best_val_loss:
+        return best_val_loss
+
     payload = {
         "step": step,
         "model_state": model.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "vocab_size": vocab_size,
+        "val_loss": val_loss,
     }
     if scheduler is not None:
         try:
             payload["scheduler_state"] = scheduler.state_dict()
         except Exception:
             payload["scheduler_state"] = None
-    torch.save(payload, resume_path)
-    print(f"Saved checkpoint: {resume_path}")
+    torch.save(payload, save_path)
+    print(f"Saved checkpoint: {save_path} (val {val_loss:.4f})")
+    return val_loss
 
 def _plot_losses(steps, train_losses, val_losses,
                  title: str = "Training vs Validation Loss",

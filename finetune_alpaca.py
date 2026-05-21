@@ -304,36 +304,6 @@ RESUME_CKPT = None
 
 
 
-def _maybe_save_checkpoint(model, optimizer, scheduler=None, step=0, vocab_size=0,
-                           val_loss=None, best_val_loss=float("inf"), best_ckpt_path=None):
-    """Save only when val_loss improves. Deletes previous best to save disk space.
-
-    This save-on-best strategy guarantees the saved file is always the best
-    checkpoint regardless of when the best val loss occurs — solving the problem
-    of periodic saves missing the true best.
-    """
-    if val_loss is None or val_loss >= best_val_loss:
-        return best_val_loss, best_ckpt_path
-
-    if best_ckpt_path and os.path.exists(best_ckpt_path):
-        os.remove(best_ckpt_path)
-
-    new_path = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
-    payload = {
-        "step": step,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "vocab_size": vocab_size,
-        "val_loss": val_loss,
-    }
-    if scheduler is not None:
-        try:
-            payload["scheduler_state"] = scheduler.state_dict()
-        except Exception:
-            payload["scheduler_state"] = None
-    torch.save(payload, new_path)
-    print(f"  Saved best checkpoint: {new_path} (val {val_loss:.4f})")
-    return val_loss, new_path
 
 
 
@@ -355,7 +325,7 @@ def train_loop(model):
         model, optimizer, scheduler, resume_path=RESUME_CKPT, device=device)
 
     steps, train_losses, val_losses = [], [], []
-    best_ckpt_path = RESUME_CKPT if RESUME_CKPT and best_val_loss < float("inf") else None
+    save_path = f"{MODEL_DIR}/tinygpt_finetuned_checkpoint_alpaca.pt"
 
     for step in range(start_step, MAX_STEPS):
         # 1. Accumulate gradients over multiple micro-batches
@@ -390,13 +360,14 @@ def train_loop(model):
             marker = " *** best ***" if val_loss_val < best_val_loss else ""
             print(f"step {step+1}: train {avg_train_loss:.4f} | val {val_loss_val:.4f}{marker}")
 
-            best_val_loss, best_ckpt_path = _maybe_save_checkpoint(
+            best_val_loss = tinygpt._maybe_save_checkpoint(
                 model=model, optimizer=optimizer, scheduler=scheduler,
                 step=step, vocab_size=enc.n_vocab,
-                val_loss=val_loss_val, best_val_loss=best_val_loss, best_ckpt_path=best_ckpt_path,
+                save_path=save_path,
+                val_loss=val_loss_val, best_val_loss=best_val_loss,
             )
 
-    print(f"\nBest val loss: {best_val_loss:.4f} — checkpoint: {best_ckpt_path}")
+    print(f"\nBest val loss: {best_val_loss:.4f} — checkpoint: {save_path}")
     tinygpt._plot_losses(
         steps, train_losses, val_losses,
         title="Fine-Tuning Loss — TinyGPT on Alpaca Cleaned",
