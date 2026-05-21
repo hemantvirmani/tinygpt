@@ -10,7 +10,7 @@ from transformers import GPT2LMHeadModel
 from safetensors.torch import load_file
 
 PROMPT  = "Hello, I'm a language model,"
-HF_DIR  = "tinygpt_hf"
+HF_DIR  = "tinygpt_pretrained_model_hf"
 
 def load_hf(hf_dir):
     model = GPT2LMHeadModel.from_pretrained(hf_dir)
@@ -39,7 +39,7 @@ def main():
     print("Loading HF model ...")
     hf, sf_sd = load_hf(HF_DIR)
 
-    tiny_sd = torch.load("tinygpt_weights.pt", map_location="cpu", weights_only=True)
+    tiny_sd = torch.load("tinygpt_pretrained_weights.pt", map_location="cpu", weights_only=True)
 
     # ── 1. Weight-value checks (directly compare saved tensors) ──────────────
     print("\n-- Weight value checks --")

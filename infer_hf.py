@@ -10,7 +10,7 @@ import os
 import torch
 from transformers import GPT2LMHeadModel, GPT2Tokenizer
 
-MODEL_DIR = "tinygpt_hf"
+MODEL_DIR = "tinygpt_pretrained_model_hf"
 
 BENCHMARK_PROMPTS = [
     # Karpathy's prompt

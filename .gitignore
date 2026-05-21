@@ -26,3 +26,5 @@ gpt2-training-artifacts/.claude/settings.local.json
 
 gpt2-training-artifacts/tinygpt_pretrained_model_hf/
 
+gpt2-training-artifacts/tinygpt_finetuned_model_hf_alpaca/
+

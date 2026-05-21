@@ -1,15 +1,20 @@
 """
-Convert TinyGPT weights to HuggingFace GPT-2 format.
+Convert TinyGPT Alpaca fine-tuned weights to HuggingFace GPT-2 format.
+
+The fine-tuning checkpoint is a dict with keys: step, model_state,
+optimizer_state, val_loss, scheduler_state. This script extracts
+model_state and runs the same name-map / transposition logic as
+export_to_hf.py.
 
 Usage:
     pip install transformers
-    python export_to_hf.py
+    python export_to_hf_alpaca.py
 """
 import torch
 from transformers import GPT2Config, GPT2LMHeadModel, GPT2Tokenizer
 
-WEIGHTS_FILE = "tinygpt_pretrained_weights.pt"
-OUTPUT_DIR   = "tinygpt_pretrained_model_hf"
+WEIGHTS_FILE = "tinygpt_finetuned_checkpoint_alpaca.pt"
+OUTPUT_DIR   = "tinygpt_finetuned_model_hf_alpaca"
 N_LAYERS     = 12
 N_EMBD       = 768
 
@@ -47,7 +52,10 @@ def build_name_map(n_layers: int) -> dict:
 
 def convert():
     print(f"Loading weights from {WEIGHTS_FILE} ...")
-    tiny_sd = torch.load(WEIGHTS_FILE, map_location="cpu", weights_only=True)
+    ckpt = torch.load(WEIGHTS_FILE, map_location="cpu", weights_only=False)
+    tiny_sd = ckpt["model_state"]
+    print(f"  Checkpoint step: {ckpt.get('step', 'unknown')}  "
+          f"val_loss: {ckpt.get('val_loss', 'unknown')}")
 
     config = GPT2Config(
         vocab_size=50257,

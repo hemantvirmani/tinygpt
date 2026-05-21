@@ -12,14 +12,35 @@ TinyGPT saves a checkpoint every 1000 steps.
 
 ## Inference and Hosted Model
 
-The TinyGPT PyTorch-native model file is hosted on Hugging Face: [hemantvirmani/tinyGPT](https://huggingface.co/hemantvirmani/tinyGPT/).
+### Pretrained TinyGPT
 
-[infer_pytorch.py](infer_pytorch.py) loads the PyTorch-native model with `tinygpt.load_model_for_inference()` and runs the prompt suite used for the sample generations.
+Both formats are hosted on Hugging Face at [hemantvirmani/tinyGPT](https://huggingface.co/hemantvirmani/tinyGPT/):
 
-- [output1.txt](output1.txt) contains sample outputs from PyTorch-native inference with `temperature=1.0` and `max_tokens=500`.
-- [output2.txt](output2.txt) contains the better sample outputs from PyTorch-native inference with `temperature=0.7` and `max_tokens=500`.
+- **PyTorch-native weights** (`tinygpt_pretrained_weights.pt`) — load with `tinygpt.load_model_for_inference()`
+- **HuggingFace format** (`model.safetensors` + `config.json`) — load with `GPT2LMHeadModel.from_pretrained("hemantvirmani/tinyGPT")`
+
+**Inference scripts:**
+
+- [infer_pytorch.py](infer_pytorch.py) — loads the PyTorch-native model and runs the prompt suite used for the sample generations.
+- [infer_hf.py](infer_hf.py) — loads the HuggingFace-format model from `tinygpt_pretrained_model_hf/` and runs the same prompt suite.
+
+**Export scripts:**
+
+- [export_to_hf.py](export_to_hf.py) — converts `tinygpt_pretrained_weights.pt` → `tinygpt_pretrained_model_hf/` (HuggingFace format).
+
+- [pretraining_output_1.0.txt](gpt2-training-artifacts/pretraining_output_1.0.txt) contains sample outputs from PyTorch-native inference with `temperature=1.0` and `max_tokens=500`.
+- [pretraining_output_0.7.txt](gpt2-training-artifacts/pretraining_output_0.7.txt) contains the better sample outputs from PyTorch-native inference with `temperature=0.7` and `max_tokens=500`.
 
 Temperature controls sampling randomness: lower values usually make generations more conservative and coherent, while higher values add variety but can drift more.
+
+### Instruction-Tuned TinyGPT (Alpaca)
+
+Fine-tuned on Alpaca Cleaned 52K. Upload to Hugging Face pending.
+
+- **PyTorch-native weights** (`tinygpt_finetuned_checkpoint_alpaca.pt`) — _not yet uploaded_
+- **HuggingFace format** (`tinygpt_pretrained_model_hf_alpaca/`) — _not yet exported or uploaded_
+
+**Export script:** [export_to_hf_alpaca.py](export_to_hf_alpaca.py) — converts `tinygpt_finetuned_checkpoint_alpaca.pt` → `tinygpt_pretrained_model_hf_alpaca/` (HuggingFace format).
 
 ## Reproducibility
 
@@ -28,12 +49,14 @@ A fixed random seed (`G_SEED`) seeds both CPU and CUDA so experiments are easier
 ## Performance Optimizations
 
 ### Hardware Performance Optimizations
+
 - TensorFloat-32 (TF32) precision: `torch.set_float32_matmul_precision('high')` for 19-bit internal matmul precision. [DONE]
 - bfloat16 mixed precision: `torch.autocast` for faster, lower-precision training without float16 overflow issues. [DONE]
 - Kernel fusion via `torch.compile`: fuses ops into a single CUDA kernel to reduce overhead. [DONE]
 - FlashAttention: `torch.nn.functional.scaled_dot_product_attention` to avoid materializing the NxN attention matrix. [DONE]
 
 ### Algorithmic Optimizations
+
 - AdamW optimizer with GPT-3 hyperparameters: beta1=0.9, beta2=0.95, epsilon=1e-8. [DONE]
 - Weight decay 0.1 on 2D parameters only (exclude biases and LayerNorm scales). [DONE]
 - Cosine LR schedule: linear warmup to max LR, then decay to 10% of max. [DONE]
@@ -62,14 +85,14 @@ Tokenizer: `tiktoken` with GPT-2 encoding.
 
 ### FemtoGPT (~10M params, 6 layers, 6 heads, embd=384, ctx=256, char-level tokenizer)
 
-| Config | Train Loss | Val Loss |
-|--------|-----------|---------|
-| batch=64, iters=2000, lr=3e-4 | 1.3349 | 1.6529 |
+| Config                          | Train Loss | Val Loss |
+|---------------------------------|------------|----------|
+| batch=64, iters=2000, lr=3e-4   | 1.3349     | 1.6529   |
 
 ### TinyGPT (163.04M params, 12 layers, 12 heads, embd=768, ctx=1024)
 
 | Attempt | Steps | Dataset | Eff. Batch | LR | Best Val Loss | Notes |
-|---------|-------|---------|-----------|-----|--------------|-------|
+| --- | --- | --- | --- | --- | --- | --- |
 | 1 | ~60K | Offline curated corpus | 16 | 1e-5 | ~3.64 | Resumed from prior run; very low LR; dataset exhausted |
 | 2 | 100K | FineWeb-Edu 10BT (~2.5 GB), offline | 32 | 3e-4 | **3.34** (step 99.4K) | Still declining at cutoff; run stopped at 100K step limit |
 | 3 | 379,400 | FineWeb-Edu 100BT, streaming | 32 | 3e-4 | **3.1878** (step 376K) | Slow crawl due to small effective batch; checkpoint saved for attempt 4 |
@@ -91,7 +114,7 @@ Full fine-tune of the pretrained TinyGPT weights on the [yahma/alpaca-cleaned](h
 | Learning rate | 1e-4 (warmup + cosine decay) |
 | Effective batch size | 64 (4 micro-batch × 16 accumulation steps) |
 | Best val loss | **1.8405** (step 3,600 of 5,000) |
-| Final weights | `tinygpt_alpaca_weights.pt` |
+| Final weights | `tinygpt_finetuned_checkpoint_alpaca.pt` |
 
 **Key lesson:** Dropout = 0.1 is critical at fine-tuning time — without it, the train/val gap exceeded 0.80 within 2,000 steps. With it, the gap stayed at 0.40–0.50. Format acquisition is fast (first 100 steps); factual accuracy is limited by the 163M parameter capacity.
 
@@ -108,7 +131,7 @@ Run → Understand → Control → Scale → Customize
 
 ## Credits
 
-* Inspired by Andrej Karpathy and GPT architectures.
-* For TinyGPT, I used ChatGPT for helping with the starting code.
-* Both ChatGPT and Gemini answered a lot of questions along the way.
-* Thanks to Kaggle and RunPod for GPU access.
+- Inspired by Andrej Karpathy and GPT architectures.
+- For TinyGPT, I used ChatGPT for helping with the starting code.
+- Both ChatGPT and Gemini answered a lot of questions along the way.
+- Thanks to Kaggle and RunPod for GPU access.

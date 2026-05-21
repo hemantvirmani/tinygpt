@@ -43,7 +43,7 @@ G_SPLIT_RATIO = 0.8
 USE_SDP_ATTENTION = True
 LOAD_CHECKPOINT = True
 BINARY_DATASET_FILENAME = "dataset.bin"
-CHECKPOINT_FILE = "tinygpt_weights.pt"
+CHECKPOINT_FILE = "tinygpt_pretrained_weights.pt"
 #CHECKPOINT_FILE = "tinygpt_latest.pt"
 
 # Streaming dataset config (used when G_USE_STREAMING=True)
@@ -460,6 +460,8 @@ class TinyGPT(nn.Module):
             probs = F.softmax(logits, dim=-1)
 
             idx_next = torch.multinomial(probs, num_samples=1)
+            if idx_next.item() == self.state.tokenizer.eot_token:
+                break
             idx = torch.cat((idx, idx_next), dim=1)
 
         text = self.state.tokenizer.decode(idx[0].tolist())
