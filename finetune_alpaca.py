@@ -21,7 +21,7 @@ Setup required before running on Kaggle:
 #       git clone https://github.com/hemantvirmani/tinygpt /kaggle/working/tinygpt
 #   wget -q --show-progress \
 #       -O /kaggle/working/models/tinygpt_pretrained_weights.pt \
-#       https://huggingface.co/hemantvirmani/tinyGPT/resolve/main/tinygpt_pretrained_weights.pt
+#       "https://huggingface.co/hemantvirmani/tinyGPT/resolve/main/pretraining/PyTorch%20native/tinygpt_pretrained_weights.pt"
 #   ls -lh /kaggle/working/models/tinygpt_pretrained_weights.pt
 
 # =============================================================================
@@ -199,7 +199,7 @@ def _get_batch_finetuning(split):
 
 
 # =============================================================================
-# Step 6: Baseline — Test BEFORE Fine-Tuning
+# Step 5: Baseline — Test BEFORE Fine-Tuning
 # =============================================================================
 
 test_prompts = [
@@ -226,7 +226,7 @@ test_model(model, test_prompts, label="BASELINE (Before Fine-Tuning)")
 
 
 # =============================================================================
-# Step 9: Training Loop
+# Step 6: Training Loop
 # =============================================================================
 
 # Point tinygpt's infrastructure globals at fine-tuning paths and labels.
@@ -243,7 +243,7 @@ print("\nTraining complete!")
 
 
 # =============================================================================
-# Step 10: Test AFTER Fine-Tuning
+# Step 7: Test AFTER Fine-Tuning
 #
 # Same prompts as baseline. Compare the delta — that's your intuition moment.
 # =============================================================================
@@ -251,7 +251,7 @@ print("\nTraining complete!")
 test_model(model, test_prompts, label="AFTER Instruction Fine-Tuning")
 
 # =============================================================================
-# Step 11: Save Final Weights
+# Step 8: Save Final Weights
 #
 # Load the best checkpoint and extract inference-only weights (strips optimizer
 # and scheduler state). The resulting file is what you upload to Hugging Face
@@ -276,19 +276,3 @@ if isinstance(best_val, float):
 else:
     print(f"Best step: {best_step}")
 
-# =============================================================================
-# What Just Happened?
-#
-# Stage                        | What the model learned
-# -----------------------------|-----------------------------------------------
-# Pretraining (base model)     | Predict next tokens from raw FineWeb-Edu text
-# Instruction fine-tuning here | Recognize ### Instruction / ### Response
-#                              | structure and generate helpful answers
-#
-# Dataset: yahma/alpaca-cleaned — 52K instruction/response pairs,
-#          cleaned version of Stanford Alpaca.
-#
-# Next step: Take this instruction-tuned TinyGPT and do domain SFT on
-#            Indian mythology Q&A pairs — or repeat this pipeline on
-#            Qwen3-4B with LoRA for a production-grade result.
-# =============================================================================
