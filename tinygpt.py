@@ -270,6 +270,70 @@ class Block(nn.Module):
 
         return x
 
+class LoRALinear(nn.Module):
+    """Drop-in replacement for nn.Linear that adds a trainable low-rank bypass.
+
+    output = W·x  +  (B·A·x) * (alpha / rank)
+
+    W is frozen. Only A and B are trained.
+    B is zero-initialized so the adapter starts as an identity delta (ΔW = 0).
+    """
+    def __init__(self, linear: nn.Linear, rank: int = 8, alpha: float = 16.0):
+        super().__init__()
+        in_features  = linear.in_features
+        out_features = linear.out_features
+
+        self.linear = linear
+        self.linear.weight.requires_grad_(False)
+        if self.linear.bias is not None:
+            self.linear.bias.requires_grad_(False)
+
+        self.rank  = rank
+        self.scale = alpha / rank
+
+        self.lora_A = nn.Parameter(torch.empty(rank, in_features))
+        self.lora_B = nn.Parameter(torch.zeros(out_features, rank))
+        nn.init.kaiming_uniform_(self.lora_A, a=5 ** 0.5)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        base = self.linear(x)
+        lora = (x @ self.lora_A.T) @ self.lora_B.T
+        return base + lora * self.scale
+
+
+def inject_lora(
+    model: nn.Module,
+    target_modules: tuple[str, ...] = ("c_attn", "c_proj"),
+    rank: int = 8,
+    alpha: float = 16.0,
+) -> nn.Module:
+    """Replace named Linear layers in-place with LoRALinear wrappers.
+
+    Freezes all other parameters so only LoRA weights are trained.
+    Returns the modified model (same object).
+    """
+    for module in model.modules():
+        for attr_name in target_modules:
+            if hasattr(module, attr_name):
+                original = getattr(module, attr_name)
+                if isinstance(original, nn.Linear):
+                    setattr(module, attr_name, LoRALinear(original, rank=rank, alpha=alpha))
+
+    # Freeze everything, then unfreeze only LoRA params
+    for p in model.parameters():
+        p.requires_grad_(False)
+    for module in model.modules():
+        if isinstance(module, LoRALinear):
+            module.lora_A.requires_grad_(True)
+            module.lora_B.requires_grad_(True)
+
+    total   = sum(p.numel() for p in model.parameters())
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"LoRA injected: {trainable:,} trainable / {total:,} total params "
+          f"({100 * trainable / total:.2f}%)")
+    return model
+
+
 def configure_optimizers(model: nn.Module, weight_decay: float, learning_rate: float, device_type: str):
     param_dict = {pn: p for pn, p in model.named_parameters() if p.requires_grad}
     decay_params   = [p for _, p in param_dict.items() if p.dim() >= 2]
