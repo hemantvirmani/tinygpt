@@ -2,7 +2,7 @@
 # BINARY_DATASET_FILENAME = "/kaggle/input/datasets/hemantvirmani/gpt-training-dataset/dataset.bin"
 # CHECKPOINT_FILE = "/kaggle/working/tinygpt_latest.pt"
 # BINARY_DATASET_FILENAME = "/workspace/dataset/dataset.bin"
-# CHECKPOINT_FILE = "/workspace/chkpt/tinygpt_latest.pt"
+# CHECKPOINT_FILE = "/workspace/chkpt/tinygpt_pretrained_weights.pt"
 
 import inspect
 import torch
@@ -374,6 +374,9 @@ class TinyGPT(nn.Module):
         self.head = nn.Linear(G_N_EMBD, state.vocab_size, bias=False)
 
         self.apply(self._init_weights)
+        # Weight tying: lm_head and token embedding share the same matrix.
+        # Saves 38.6M params (768×50257); standard in GPT-2 / nanoGPT.
+        self.head.weight = self.token_embedding_table.weight
 
     def forward(self, idx):
         B, T = idx.shape

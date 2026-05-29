@@ -59,7 +59,7 @@ export trivial, and unlocks weight tying.
 
 ---
 
-## 3. Weight Tying: lm_head.weight = wte.weight [OPTIONAL, SKIPPING]
+## 3. Weight Tying: lm_head.weight = wte.weight [DONE]
 
 **File:** `tinygpt.py`, `TinyGPT.__init__` (after removing lm_head bias above)
 
