@@ -48,19 +48,19 @@ class Hyperparameters:
     lr:                   float = 6e-4
     weight_decay:         float = 0.1
     grad_clip:            float = 1.0
-    warmup_iters:         int   = 1_800   # 6% of max_iters=30K
-    max_iters:            int   = 30_000   # at eff_batch=512: ~15.7B tokens = 1.57 passes through FineWeb 10BT
+    warmup_iters:         int   = 1_500   # absolute warmup; covers early-init/Adam transient, not scaled to max_iters
+    max_iters:            int   = 50_000   # at eff_batch=512: ~26B tokens = ~2.9 passes through OpenWebText (~9B tok)
     batch_size:           int   = 16
     effective_batch_size: int   = 512    # accumulation = effective_batch_size / batch_size
     eval_steps:           int   = 100    # evaluate every N training steps
     eval_iterations:      int   = 50     # batches averaged during validation
-    patience:             int   = 6_000  # stop if no improvement for this many steps (~20% of max_iters)
+    patience:             int   = 10_000 # stop if no improvement for this many steps (~20% of max_iters)
     min_delta:            float = 0.01   # minimum improvement in val loss to reset patience
 
 # Streaming dataset config (used when G_USE_STREAMING=True)
 G_USE_STREAMING = True
-STREAMING_HF_DATASET = "HuggingFaceFW/fineweb"
-STREAMING_HF_SUBSET = "sample-10BT"
+STREAMING_HF_DATASET = "Skylion007/openwebtext"
+STREAMING_HF_SUBSET = None  # OpenWebText has no named config
 STREAMING_VAL_DOCS = 2000  # first 2000 documents reserved for validation
 #Random seed for reproducibility
 torch.manual_seed(G_SEED)
